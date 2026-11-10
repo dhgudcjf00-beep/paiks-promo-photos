@@ -120,6 +120,35 @@
     data.status = localJson('status-cache');
   }
 
+  // ---------- 첫 화면: 저장해 둔 내용을 먼저 보여주고, 뒤에서 새로 받는다 ----------
+  // 점포 목록과 현황을 한 번에 받는다. 서버가 아직 옛 버전이면 둘로 나눠 받는다.
+  async function fetchInit() {
+    let json = await getJson({ action: 'init' });
+    if (!json.ok && json.error === 'unknown_action') {
+      json = await getJson({ action: 'stores' });
+      if (json.ok) { const s = await getJson({ action: 'status' }); json.status = s.ok ? s.status : {}; }
+    }
+    return json;
+  }
+  const sigOf = (j) => JSON.stringify([j.me, j.rows || j.stores, j.links, j.status]);
+  let lastSig = '';
+  function applyInit(json) { ingest(json); data.status = json.status || {}; lastSig = sigOf(json); }
+  function saveInit(json) {
+    const { status, ...rest } = json;
+    ls.set('data-cache', JSON.stringify(rest));
+    ls.set('status-cache', JSON.stringify(status || {}));
+    ls.set('data-cache-for', normCode(ls.get('accessCode')));
+  }
+  function savedInit() {
+    if (ls.get('data-cache-for') !== normCode(ls.get('accessCode'))) return null; // 같은 코드로 받은 것만
+    try {
+      const json = JSON.parse(ls.get('data-cache'));
+      if (!json || !json.me) return null;
+      json.status = JSON.parse(ls.get('status-cache', '{}'));
+      return json;
+    } catch { return null; }
+  }
+
   const stat = (code) => {
     const v = data.status[code];
     return { before: v ? Number(v[0]) || 0 : 0, after: v ? Number(v[1]) || 0 : 0, folder: v && v[3] ? v[3] : '' };
@@ -322,9 +351,14 @@
       } else {
         const json = await getJson({ action: 'photos', store: store.code, name: store.name });
         if (!json.ok) throw fail(json.error);
+        const th = json.th || {}; // 서버가 이미 기억해 둔 작은 사진은 목록에 같이 온다
         for (const kind of ['before', 'after']) {
           const local = new Map(b[kind].map((e) => [e.id, e]));
-          const fresh = (json[kind] || []).map((e) => local.get(e.id) || e);
+          const fresh = (json[kind] || []).map((e) => {
+            const x = local.get(e.id) || e;
+            if (!x.thumb && th[x.id]) { x.thumb = th[x.id]; thumbDB.put(x.id, x.thumb); }
+            return x;
+          });
           // 이번 화면에서 방금 올려 아직 목록에 없는 사진은 남기되, 같은 자리의 사진이 목록에 있으면 목록 쪽이 맞다
           const extra = [...local.values()].filter((e) => !fresh.some((x) => x.id === e.id) && !fresh.some((x) => x.slot && x.slot === e.slot && x.t >= e.t));
           b[kind] = [...extra, ...fresh];
@@ -334,6 +368,7 @@
     } catch { b.failed = true; }
     b.loading = false;
     if (storeView && storeView.code === store.code) storeView.paintTable();
+    if (b.loaded) fillThumbs(store);
   }
 
   function fetchImage(entry, action, field) {
@@ -348,21 +383,65 @@
     return entry[pending];
   }
 
-  // 작은 사진은 다섯 장씩 동시에 요청한다
-  const thumbQueue = [];
-  let thumbActive = 0;
-  function queueThumb(entry, img) {
-    if (entry.thumb) { img.src = entry.thumb; return; }
-    thumbQueue.push({ entry, img });
-    pumpThumbs();
+  // 작은 사진은 이 기기에 남겨 두고(사진 ID는 바뀌지 않는다) 다음에는 바로 보여준다. 막혀 있으면 그냥 건너뛴다.
+  const thumbDB = (() => {
+    let opened = null;
+    const open = () => opened || (opened = new Promise((resolve) => {
+      try {
+        const req = indexedDB.open('promo-thumbs', 1);
+        req.onupgradeneeded = () => req.result.createObjectStore('t');
+        req.onsuccess = () => {
+          const db = req.result;
+          try { // 너무 쌓이면 비우고 다시 시작한다
+            const c = db.transaction('t', 'readonly').objectStore('t').count();
+            c.onsuccess = () => { if (c.result > 2500) { try { db.transaction('t', 'readwrite').objectStore('t').clear(); } catch { /* 무시 */ } } };
+          } catch { /* 무시 */ }
+          resolve(db);
+        };
+        req.onerror = () => resolve(null);
+      } catch { resolve(null); }
+    }));
+    const run = async (mode, fn) => {
+      const db = await open();
+      if (!db) return undefined;
+      return new Promise((resolve) => {
+        try {
+          const tx = db.transaction('t', mode);
+          const req = fn(tx.objectStore('t'));
+          tx.oncomplete = () => resolve(req && req.result !== undefined ? req.result : undefined);
+          tx.onerror = () => resolve(undefined);
+          tx.onabort = () => resolve(undefined);
+        } catch { resolve(undefined); }
+      });
+    };
+    return { get: (id) => run('readonly', (s) => s.get(id)), put: (id, url) => run('readwrite', (s) => s.put(url, id)) };
+  })();
+
+  // 목록에 같이 오지 않은 작은 사진을 채운다: 이 기기에 남은 것 먼저, 나머지는 6장씩 묶어 한꺼번에(동시에 3묶음)
+  async function fillThumbs(store) {
+    const b = book(store.code);
+    const need = [...b.before, ...b.after].filter((e) => !e.thumb && !e.local);
+    if (!need.length) return;
+    await Promise.all(need.map(async (e) => { const u = await thumbDB.get(e.id); if (u) e.thumb = u; }));
+    if (storeView && storeView.code === store.code) storeView.paintTable();
+    const rest = need.filter((e) => !e.thumb);
+    const groups = [];
+    for (let i = 0; i < rest.length; i += 6) groups.push(rest.slice(i, i + 6));
+    let next = 0;
+    const worker = async () => {
+      while (next < groups.length) {
+        const g = groups[next]; next += 1;
+        try {
+          const json = await getJson({ action: 'thumbs', store: store.code, name: store.name, ids: g.map((e) => e.id).join(',') });
+          if (json.ok) for (const e of g) { const u = json.items && json.items[e.id]; if (u) { e.thumb = u; thumbDB.put(e.id, u); } }
+        } catch { /* 못 받으면 빈 칸으로 두고, 눌러서 크게 볼 수 있다 */ }
+        if (storeView && storeView.code === store.code) storeView.paintTable();
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
   }
-  function pumpThumbs() {
-    while (thumbActive < 5 && thumbQueue.length) {
-      const { entry, img } = thumbQueue.shift();
-      thumbActive += 1;
-      fetchImage(entry, 'thumb', 'thumb').then((url) => { if (url) img.src = url; }).finally(() => { thumbActive -= 1; pumpThumbs(); });
-    }
-  }
+
+  function queueThumb(entry, img) { if (entry.thumb) img.src = entry.thumb; }
 
   function lightbox() {
     let dlg = $('#lightbox');
@@ -385,18 +464,18 @@
   }
 
   // 방금 올린 사진을 화면에 바로 넣는다 (시험 모드에서는 이 기기에 저장해 새로 열어도 남는다)
-  async function smallDataUrl(blob, edge = 720) {
+  async function smallDataUrl(blob, edge = 720, quality = 0.72) {
     const bmp = await createImageBitmap(blob);
     const s = Math.min(1, edge / Math.max(bmp.width, bmp.height));
     const c = document.createElement('canvas');
     c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
     c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
     if (bmp.close) bmp.close();
-    return c.toDataURL('image/jpeg', 0.72);
+    return c.toDataURL('image/jpeg', quality);
   }
 
   // 같은 자리에 올리면 이전 사진을 바꾼다. 바꾼 것이면 true
-  async function remember(store, kind, slot, blob, res) {
+  async function remember(store, kind, slot, blob, res, tiny) {
     const entry = { id: res.fileId || `local-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, name: res.fileName || '', slot, t: new Date().toISOString(), by: me ? me.name : '', local: true };
     const b = book(store.code);
     const replaced = b[kind].some((e) => e.slot === slot);
@@ -408,7 +487,9 @@
       all[store.code] = mineList;
       ls.set('demo-photos', JSON.stringify(all)); // 가득 차면 이번 화면에서만 보인다
     } else {
-      entry.thumb = entry.full = URL.createObjectURL(blob);
+      entry.thumb = tiny || await smallDataUrl(blob, 360, 0.7); // 작은 사진은 글자(data 주소)라 이 기기에도 남길 수 있다
+      entry.full = URL.createObjectURL(blob);
+      if (res.fileId) thumbDB.put(entry.id, entry.thumb);
     }
     b[kind] = [entry, ...b[kind].filter((e) => e.slot !== slot)];
     return replaced;
@@ -448,7 +529,7 @@
       const pick = h('input', { type: 'file', accept: 'image/*', 'aria-label': `${label} ${col} 고르기`,
         onchange: (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) send(kind, slot, f); } });
       if (!entry && !st) {
-        return h('label', { class: 'cell empty' }, pick, h('b', { text: '+' }), h('small', { text: col }));
+        return h('label', { class: 'cell blank' }, pick, h('span', { class: 'fill' }, h('b', { text: '+' }), h('small', { text: col })));
       }
       const img = h('img', { alt: `${label} ${col}` });
       if (st) img.src = st.url; else queueThumb(entry, img);
@@ -456,7 +537,7 @@
         ? h('div', { class: 'shot' }, img)
         : h('button', { type: 'button', class: 'shot', 'aria-label': `${label} ${col} 크게 보기`, onclick: () => openPhoto(entry, `${label} ${col}`) }, img);
       return h('div', { class: 'cell filled', 'data-state': st ? st.state : 'ok' }, shot,
-        st && st.state === 'up' ? h('span', { class: 'st', text: '올리는 중' }) : null,
+        st && st.state !== 'error' ? h('span', { class: 'st', text: st.state === 'wait' ? '대기 중' : '올리는 중' }) : null,
         st && st.state === 'error' ? h('button', { type: 'button', class: 'st retry', onclick: () => send(kind, slot, st.file), text: '실패, 다시 시도' }) : null,
         !st ? h('label', { class: 'swap' }, pick, '바꾸기') : null);
     }
@@ -483,16 +564,21 @@
     async function send(kind, slot, file) {
       const key = `${kind}:${slot}`;
       const prev = working.get(key);
-      if (prev && prev.state === 'up') return;
+      if (prev && (prev.state === 'up' || prev.state === 'wait')) return;
       if (prev && prev.file !== file) URL.revokeObjectURL(prev.url);
-      const st = { state: 'up', file, url: prev && prev.file === file ? prev.url : URL.createObjectURL(file) };
+      const st = { state: uploadQ.running < UPLOAD_PARALLEL ? 'up' : 'wait', file, url: prev && prev.file === file ? prev.url : URL.createObjectURL(file) };
       working.set(key, st); notice = ''; paintTable();
       try {
-        const blob = await compress(file);
-        const res = await sendPhoto(store, kind, slot, file.name, blob);
-        const replaced = await remember(store, kind, slot, blob, res || {});
-        URL.revokeObjectURL(st.url); working.delete(key);
-        recount(code, kind, replaced);
+        await schedule(async () => {
+          st.state = 'up';
+          if (storeView && storeView.code === code) storeView.paintTable();
+          const blob = await compress(file);
+          const tiny = DEMO ? '' : await smallDataUrl(blob, 360, 0.7).catch(() => ''); // 서버가 목록에 바로 쓰도록 작은 사진을 함께 보낸다
+          const res = await sendPhoto(store, kind, slot, file.name, blob, tiny);
+          const replaced = await remember(store, kind, slot, blob, res || {}, tiny);
+          URL.revokeObjectURL(st.url); working.delete(key);
+          recount(code, kind, replaced);
+        });
       } catch (err) {
         st.state = 'error';
         if (err && err.code === 'bad_code') notice = '접속 코드가 맞지 않아 올리지 못했어요. 로그아웃한 뒤 코드를 다시 입력해 주세요.';
@@ -539,24 +625,40 @@
     r.readAsDataURL(blob);
   });
 
-  async function sendPhoto(store, kind, slot, name, blob) {
+  const NO_RETRY = new Set(['bad_code', 'not_allowed', 'bad_slot', 'bad_kind', 'bad_mime', 'bad_size', 'bad_store_code', 'limit']);
+
+  // 한 번에 보내는 사진은 3장까지만, 나머지는 줄을 선다(구글은 동시에 많이 오면 거절하고, 한꺼번에 보내도 더 빠르지 않다)
+  const UPLOAD_PARALLEL = 3;
+  const uploadQ = { running: 0, waiting: [] };
+  function schedule(task) {
+    return new Promise((resolve, reject) => {
+      const run = () => {
+        uploadQ.running += 1;
+        task().then(resolve, reject).finally(() => { uploadQ.running -= 1; const next = uploadQ.waiting.shift(); if (next) next(); });
+      };
+      if (uploadQ.running < UPLOAD_PARALLEL) run(); else uploadQ.waiting.push(run);
+    });
+  }
+
+  async function sendPhoto(store, kind, slot, name, blob, tiny) {
     if (DEMO) { await new Promise((r) => setTimeout(r, 350)); return {}; }
     const payload = {
       action: 'upload', code: ls.get('accessCode'), uploader: me ? me.name : '',
       storeCode: store.code, storeName: store.name, kind, slot,
-      fileName: name, mime: 'image/jpeg', data: await toBase64(blob),
+      fileName: name, mime: 'image/jpeg', data: await toBase64(blob), thumb: tiny ? tiny.split(',')[1] || '' : '',
     };
     let lastErr;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    // 구글은 동시에 너무 많은 요청이 오면 일부를 거절한다. 그럴 때는 잠깐씩 점점 더 쉬었다가(1, 2, 4, 8초, 조금씩 어긋나게) 다시 보낸다.
+    for (let attempt = 0; attempt < 5; attempt += 1) {
       try {
         // text/plain 으로 보내면 브라우저 사전 확인 요청 없이 앱스 스크립트가 받는다
         const res = await fetch(cfg.endpoint, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) });
         const json = await res.json();
         if (json.ok) return json;
         lastErr = fail(json.error || 'upload_failed');
-        if (json.error === 'bad_code') throw lastErr;
-      } catch (err) { lastErr = err; if (err.code === 'bad_code') throw err; }
-      await new Promise((r) => setTimeout(r, 900 * (attempt + 1)));
+        if (NO_RETRY.has(json.error)) throw lastErr; // 다시 해도 소용없는 거절은 바로 알린다
+      } catch (err) { lastErr = err; if (NO_RETRY.has(err.code)) throw err; }
+      await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt + Math.random() * 600));
     }
     throw lastErr;
   }
@@ -582,16 +684,49 @@
   }
 
   let routed = false;
-  async function start() {
-    $('#demo-tag').hidden = !DEMO;
-    view.replaceChildren(h('div', { class: 'wrap' }, h('p', { class: 'empty', text: '불러오는 중이에요' })));
-    me = null;
-    try { await loadData(); } catch (err) { me = null; renderGate(err); return; }
-    if (!me) { renderGate(fail('bad_code')); return; }
-    await loadStatus();
+  function begin() {
     mountWho();
     if (!routed) { window.addEventListener('hashchange', render); routed = true; }
     render();
+  }
+
+  // 이미 받아 둔 내용이 있으면 바로 보여주고, 최신 내용은 뒤에서 받아 바뀐 것만 다시 그린다
+  async function refreshInBackground() {
+    try {
+      const json = await fetchInit();
+      if (!json.ok) {
+        if (json.error === 'bad_code') { ['data-cache', 'data-cache-for', 'status-cache'].forEach((k) => ls.set(k, '')); me = null; renderGate(fail('bad_code')); }
+        return;
+      }
+      const changed = sigOf(json) !== lastSig;
+      saveInit(json);
+      applyInit(json);
+      if (changed) { mountWho(); if (!/^#\/store\//.test(location.hash)) render(); } // 점포 화면은 올리는 중인 사진이 있을 수 있어 다시 그리지 않는다
+    } catch { /* 연결이 안 되면 저장해 둔 내용으로 계속 쓴다 */ }
+  }
+
+  async function start() {
+    $('#demo-tag').hidden = !DEMO;
+    me = null;
+    if (DEMO) {
+      view.replaceChildren(h('div', { class: 'wrap' }, h('p', { class: 'empty', text: '불러오는 중이에요' })));
+      try { await loadData(); } catch (err) { me = null; renderGate(err); return; }
+      if (!me) { renderGate(fail('bad_code')); return; }
+      await loadStatus();
+      begin();
+      return;
+    }
+    if (!normCode(ls.get('accessCode'))) { renderGate(fail('need_code')); return; }
+    const saved = savedInit();
+    if (saved) { applyInit(saved); begin(); refreshInBackground(); return; }
+    view.replaceChildren(h('div', { class: 'wrap' }, h('p', { class: 'empty', text: '불러오는 중이에요' })));
+    try {
+      const json = await fetchInit();
+      if (!json.ok) throw fail(json.error || 'load');
+      saveInit(json); applyInit(json);
+    } catch (err) { me = null; renderGate(err && err.code ? err : fail('offline')); return; }
+    if (!me) { renderGate(fail('bad_code')); return; }
+    begin();
   }
   start();
 })();
