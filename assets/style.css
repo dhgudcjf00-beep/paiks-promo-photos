@@ -5,7 +5,7 @@
   --muted: #6b6b6b;
   --line: #e4e4e4;
   --soft: #f4f4f4;
-  --font: 'Pretendard Variable', Pretendard, -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
+  --font: 'Noto Sans KR', -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
 
   /* 움직임: 곡선은 하나, 길이는 용도별로만 */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
@@ -254,6 +254,91 @@ main:has(.dock:not([hidden])) { padding-bottom: calc(110px + env(safe-area-inset
   .btn.primary:hover:not(:disabled) { background: #222; }
 }
 
+/* ---------- 팀 세그먼트 (첫 화면·목록 화면) ---------- */
+.segs { display: grid; grid-template-columns: repeat(var(--n, 5), minmax(0, 1fr)); gap: 2px; background: var(--soft); border-radius: 18px; padding: 4px; margin: 34px auto 0; max-width: 560px; }
+.segs.left { margin: 18px 0 0; }
+.segs.inline { display: inline-grid; margin: 20px 0 14px; max-width: none; border-radius: 14px; padding: 3px; }
+.segs.inline .segb { height: 34px; border-radius: 12px; font-size: 13px; padding: 0 16px; }
+.segb {
+  position: relative; display: flex; align-items: center; justify-content: center; height: 44px; border: 0; border-radius: 14px; background: transparent;
+  font-size: 15px; font-weight: 800; color: var(--muted); cursor: pointer;
+  transition: transform var(--press) var(--ease-out), background-color var(--ui) var(--ease-out), color var(--ui) var(--ease-out);
+}
+.segb:active { transform: scale(0.97); }
+.segb.on { background: var(--ink); color: #fff; }
+.segb .own { position: absolute; top: 7px; right: 9px; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.seg-note { margin: 10px 4px 0; font-size: 12.5px; color: var(--muted); text-align: center; }
+
+.meter { height: 4px; border-radius: 999px; background: var(--soft); overflow: hidden; margin-top: 10px; }
+.meter i { display: block; height: 100%; background: var(--ink); }
+
+/* 관리자 기능 버튼 */
+.admin-tools { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 30px; }
+.admin-tools.left { justify-content: flex-start; margin-top: 14px; }
+.pill {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 46px; padding: 0 20px; border: 1.5px solid var(--line); border-radius: 999px;
+  background: #fff; font-size: 14.5px; font-weight: 700; cursor: pointer;
+  transition: transform var(--press) var(--ease-out), border-color var(--press) var(--ease-out);
+}
+.pill.dark { background: var(--ink); border-color: var(--ink); color: #fff; }
+.pill:active { transform: scale(0.97); }
+
+/* ---------- 불러오는 중 ---------- */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner { display: block; animation: spin 0.8s linear infinite; transform-origin: 50% 50%; }
+.spinbox { display: inline-flex; flex: none; }
+.loading { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 96px 20px 60px; color: var(--muted); font-size: 15px; }
+.loadrow { display: flex; align-items: center; gap: 12px; margin: 16px 0 0; padding: 14px 16px; border-radius: 16px; background: var(--soft); font-size: 14.5px; font-weight: 500; }
+.cell .spin-over { position: absolute; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.55); }
+.cell .spin-over ~ .st { z-index: 2; }
+
+/* ---------- 저장 완료 알림 (스낵바) ---------- */
+@keyframes snack-in { from { opacity: 0; transform: translateY(24px) scale(0.98); } to { opacity: 1; transform: none; } }
+.snack {
+  position: fixed; left: 16px; right: 16px; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); z-index: 30; margin: 0 auto; max-width: 460px;
+  display: flex; align-items: center; gap: 12px; padding: 12px 12px 12px 14px; border-radius: 18px; background: #000; color: #fff;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.28); animation: snack-in 0.32s var(--ease-out) both;
+}
+.snack.out { opacity: 0; transform: translateY(12px); transition: opacity 0.2s var(--ease-out), transform 0.2s var(--ease-out); }
+.snack .ck { flex: none; display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: #fff; color: #000; }
+.snack .tx { flex: 1; min-width: 0; }
+.snack .tx b { display: block; font-size: 15px; font-weight: 700; }
+.snack .tx small { display: block; font-size: 12.5px; color: #bdbdbd; }
+.snack button { border: 0; background: none; color: #fff; font-weight: 700; font-size: 14px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; padding: 10px 4px; }
+
+/* ---------- 점포 화면 배치(휴대폰은 한 줄로, PC는 아래 미디어에서 두 칸) ---------- */
+.sgrid .store-name { margin-top: 6px; }
+.sgrid .back { padding-bottom: 0; }
+
+/* ---------- 로그인 기록 ---------- */
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 4px; }
+.stat { border: 1.5px solid var(--line); border-radius: 20px; padding: 14px 16px; }
+.stat .k { font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.stat .v { font-size: 30px; font-weight: 800; letter-spacing: -0.04em; line-height: 1.2; margin-top: 2px; }
+.netcard { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; padding: 16px 18px; border: 1.5px solid var(--line); border-radius: 20px; }
+.netcard .ipv { font-weight: 800; font-variant-numeric: tabular-nums; }
+.netcard small { color: var(--muted); font-size: 13px; }
+.fine { margin: 6px 0 0; font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+.loghead { display: none; }
+.loglist { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.logrow { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "name res" "time time" "ip net" "loc loc"; gap: 4px 10px; padding: 14px 4px; border-bottom: 1px solid var(--line); align-items: center; }
+.logrow .lname { grid-area: name; }
+.logrow .lname b { font-size: 15.5px; }
+.logrow .lname small { margin-left: 6px; font-size: 12px; color: var(--muted); }
+.logrow .ltime { grid-area: time; font-size: 13px; color: var(--muted); }
+.logrow .lip { grid-area: ip; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.logrow .lnet { grid-area: net; }
+.logrow .lloc { grid-area: loc; font-size: 13px; color: var(--muted); }
+.logrow .lres { grid-area: res; }
+.bd { font-style: normal; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; }
+.bd.dark { background: var(--ink); color: #fff; }
+.bd.line { background: #fff; color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--ink); }
+.bd.soft { background: var(--soft); color: var(--muted); }
+.denied { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; padding: 70px 10px; }
+.denied h1 { margin: 6px 0 0; font-size: 24px; font-weight: 800; letter-spacing: -0.03em; }
+.denied p { margin: 0; font-size: 15px; color: var(--muted); }
+.lockc { display: inline-grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; background: var(--soft); }
+
 /* PC: 넓은 화면 */
 @media (min-width: 900px) {
   .wrap { width: min(100%, 1040px); padding: 0 32px; }
@@ -293,14 +378,20 @@ main:has(.dock:not([hidden])) { padding-bottom: calc(110px + env(safe-area-inset
   .done .actions { grid-template-columns: 1fr 1fr; }
   .gate { padding-top: 24px; }
 
-  /* 점포 화면: 표처럼 항목 | 기존 사진 | 개선 사진 */
-  .sheet-cols, .srow { grid-template-columns: 220px 1fr 1fr; column-gap: 16px; }
-  .sheet-cols { display: grid; margin-top: 24px; padding: 0 0 10px; font-size: 14px; font-weight: 700; color: var(--muted); border-bottom: 1.5px solid var(--ink); }
-  .sheet-cols span:not(:first-child) { text-align: center; }
-  .grp h2 { margin-top: 0; padding: 14px 0 10px; font-size: 16px; border-bottom: 1px solid var(--line); }
-  .srow { align-items: center; padding: 12px 0; }
-  .lbl { grid-column: auto; display: grid; gap: 1px; align-content: center; }
+  /* 점포 화면: 왼쪽에 점포 정보(고정), 오른쪽에 항목별 사진 */
+  .sgrid { display: grid; grid-template-columns: 340px minmax(0, 1fr); column-gap: 72px; align-items: start; }
+  .sside { position: sticky; top: 24px; }
+  .sgrid .store-name { font-size: 44px; }
   .cell { height: 150px; padding-bottom: 0; }
+
+  /* 팀 세그먼트, 관리자 기능 */
+  .segs { max-width: 560px; }
+  .admin-tools { margin-top: 36px; }
+  .stats { gap: 16px; }
+  .loghead { display: grid; grid-template-columns: 150px 170px 160px 90px minmax(0, 1fr) 70px; gap: 12px; padding: 0 4px 10px; font-size: 12.5px; font-weight: 700; color: var(--muted); border-bottom: 1.5px solid var(--ink); }
+  .logrow { grid-template-columns: 150px 170px 160px 90px minmax(0, 1fr) 70px; grid-template-areas: "name time ip net loc res"; gap: 12px; padding: 16px 4px; }
+  .logrow .lloc, .logrow .ltime { font-size: 14px; }
+  .netcard { flex-direction: row; align-items: center; justify-content: space-between; }
 }
 
 /* 움직임 줄이기: 이동은 끄고 나타남(투명도)만 남긴다 */
