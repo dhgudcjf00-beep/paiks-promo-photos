@@ -348,7 +348,7 @@
     return entry[pending];
   }
 
-  // 작은 사진은 세 장씩만 동시에 요청한다
+  // 작은 사진은 다섯 장씩 동시에 요청한다
   const thumbQueue = [];
   let thumbActive = 0;
   function queueThumb(entry, img) {
@@ -357,7 +357,7 @@
     pumpThumbs();
   }
   function pumpThumbs() {
-    while (thumbActive < 3 && thumbQueue.length) {
+    while (thumbActive < 5 && thumbQueue.length) {
       const { entry, img } = thumbQueue.shift();
       thumbActive += 1;
       fetchImage(entry, 'thumb', 'thumb').then((url) => { if (url) img.src = url; }).finally(() => { thumbActive -= 1; pumpThumbs(); });
@@ -444,10 +444,11 @@
       const st = working.get(`${kind}:${slot}`);
       const entry = b[kind].find((e) => e.slot === slot);
       const col = COL[kind];
-      const pick = h('input', { type: 'file', accept: 'image/*', disabled: !(b.loaded || b.failed), 'aria-label': `${label} ${col} 고르기`,
+      // 올린 사진 목록을 아직 못 받았어도 바로 올릴 수 있다(같은 자리에 이미 있으면 구글 쪽에서 새 사진으로 바꾼다)
+      const pick = h('input', { type: 'file', accept: 'image/*', 'aria-label': `${label} ${col} 고르기`,
         onchange: (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) send(kind, slot, f); } });
       if (!entry && !st) {
-        return h('label', { class: `cell empty${b.loaded || b.failed ? '' : ' wait'}` }, pick, h('b', { text: '+' }), h('small', { text: col }));
+        return h('label', { class: 'cell empty' }, pick, h('b', { text: '+' }), h('small', { text: col }));
       }
       const img = h('img', { alt: `${label} ${col}` });
       if (st) img.src = st.url; else queueThumb(entry, img);
