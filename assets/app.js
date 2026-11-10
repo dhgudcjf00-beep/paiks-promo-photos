@@ -2,9 +2,26 @@
   'use strict';
   const cfg = window.APP_CONFIG || {};
   const DEMO = !cfg.endpoint;
-  const KIND = { before: '현재 상태', after: '개선 후' };
   const PAGE = 30;
-  const MAX = cfg.maxPerKind || 3; // 점포당 현재 상태·개선 후 각각 최대 장수
+  const COL = { before: '기존 사진', after: '개선 사진' };
+  // 사진을 올리는 항목. 항목마다 기존 사진 한 장, 개선 사진 한 장 (구글 스크립트의 SLOTS 와 키가 같아야 한다)
+  const SECTIONS = [
+    { title: '매장 외부', items: [
+      ['front', '전면', '간판, 키오스크 있으면 포함'],
+      ['side1', '측면 1', '코너'],
+      ['side2', '측면 2', '코너'],
+      ['back', '후면', '출입문 두 개 있는 매장의 경우'],
+    ] },
+    { title: '매장 내부', items: [
+      ['bar', 'BAR 전체사진', ''],
+      ['wall1', '벽면 1', ''],
+      ['wall2', '벽면 2', ''],
+      ['window', '외부 창호', '홀에서 외부 출입문을 바라본 사진'],
+      ['kiosk', '키오스크(내부)', ''],
+    ] },
+  ];
+  const SLOT_TOTAL = SECTIONS.reduce((n, s) => n + s.items.length, 0); // 9
+  const NEED = SLOT_TOTAL - 1; // 후면은 해당하는 매장만 올리므로, 나머지 8곳이 다 차면 완료
 
   const $ = (sel, el = document) => el.querySelector(sel);
   const view = $('#view');
@@ -124,7 +141,7 @@
   }
 
   const listTitle = (key) => ({ mine: '내 담당 점포', all: '전체 점포' })[key] || key;
-  const done = (s) => { const t = stat(s.code); return t.before && t.after; };
+  const done = (s) => { const t = stat(s.code); return t.before >= NEED && t.after >= NEED; };
 
   // ---------- 검색 ----------
   const CHO = 'ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ';
@@ -155,7 +172,7 @@
 
   // 아직 안 올린 점포가 위로 오게
   function byProgress(list) {
-    const n = (s) => { const t = stat(s.code); return (t.before ? 1 : 0) + (t.after ? 1 : 0); };
+    const n = (s) => { const t = stat(s.code); return Math.min(t.before, NEED) + Math.min(t.after, NEED); };
     return [...list].sort((a, b) => n(a) - n(b) || a.name.localeCompare(b.name, 'ko'));
   }
 
@@ -189,12 +206,12 @@
   function row(s, withTeam) {
     const t = stat(s.code);
     const sub = isManager() ? (withTeam ? [s.team, s.sv] : [s.sv]).filter(Boolean).join(' ') : '';
-    return h('li', {}, h('a', { class: 'row', href: `#/store/${enc(s.code)}`, 'aria-label': `${s.name}, 현재 상태 ${t.before ? t.before + '장' : '없음'}, 개선 후 ${t.after ? t.after + '장' : '없음'}` },
+    return h('li', {}, h('a', { class: 'row', href: `#/store/${enc(s.code)}`, 'aria-label': `${s.name}, 기존 사진 ${t.before}장, 개선 사진 ${t.after}장` },
       h('span', { class: 'name', text: s.name }),
       sub ? h('span', { class: 'sub', text: sub }) : null,
       h('span', { class: 'marks' },
-        h('i', { class: t.before ? 'mk on' : 'mk', text: '현재' }),
-        h('i', { class: t.after ? 'mk on' : 'mk', text: '개선' }))));
+        h('i', { class: t.before >= NEED ? 'mk on' : 'mk', text: `기존 ${t.before}` }),
+        h('i', { class: t.after >= NEED ? 'mk on' : 'mk', text: `개선 ${t.after}` }))));
   }
 
   function externalLink(label, href) {
@@ -289,14 +306,15 @@
   }
 
   // ---------- 올린 사진 (구글 드라이브에서 불러와 계속 보여준다) ----------
-  const photoBook = new Map(); // 점포 식별값 -> { before: [], after: [], loaded, loading }
-  const book = (code) => { if (!photoBook.has(code)) photoBook.set(code, { before: [], after: [], loaded: false, loading: false }); return photoBook.get(code); };
+  const photoBook = new Map(); // 점포 식별값 -> { before: [], after: [], loaded, loading, failed }  (각 사진: { id, slot, t, by, thumb, full })
+  const book = (code) => { if (!photoBook.has(code)) photoBook.set(code, { before: [], after: [], loaded: false, loading: false, failed: false }); return photoBook.get(code); };
+  const slotCount = (list) => new Set(list.filter((e) => e.slot).map((e) => e.slot)).size;
   let storeView = null; // 지금 열린 점포 화면이 갱신을 받는 곳
 
   async function loadPhotos(store) {
     const b = book(store.code);
     if (b.loaded || b.loading) return;
-    b.loading = true;
+    b.loading = true; b.failed = false;
     try {
       if (DEMO) {
         const all = localJson('demo-photos')[store.code] || {};
@@ -306,23 +324,28 @@
         if (!json.ok) throw fail(json.error);
         for (const kind of ['before', 'after']) {
           const local = new Map(b[kind].map((e) => [e.id, e]));
-          b[kind] = (json[kind] || []).map((e) => local.get(e.id) || e);
-          b[kind].push(...[...local.values()].filter((e) => !(json[kind] || []).some((x) => x.id === e.id)));
+          const fresh = (json[kind] || []).map((e) => local.get(e.id) || e);
+          // 이번 화면에서 방금 올려 아직 목록에 없는 사진은 남기되, 같은 자리의 사진이 목록에 있으면 목록 쪽이 맞다
+          const extra = [...local.values()].filter((e) => !fresh.some((x) => x.id === e.id) && !fresh.some((x) => x.slot && x.slot === e.slot && x.t >= e.t));
+          b[kind] = [...extra, ...fresh];
         }
       }
       b.loaded = true;
     } catch { b.failed = true; }
     b.loading = false;
-    if (storeView && storeView.code === store.code) storeView.paintGallery();
+    if (storeView && storeView.code === store.code) storeView.paintTable();
   }
 
-  async function fetchImage(entry, action, field) {
-    if (entry[field]) return entry[field];
-    try {
-      const json = await getJson({ action, id: entry.id });
-      if (json.ok) entry[field] = `data:${json.mime};base64,${json.data}`;
-    } catch { /* 못 불러오면 빈 칸으로 둔다 */ }
-    return entry[field] || '';
+  function fetchImage(entry, action, field) {
+    if (entry[field]) return Promise.resolve(entry[field]);
+    const pending = `_p_${field}`;
+    if (!entry[pending]) {
+      entry[pending] = getJson({ action, id: entry.id })
+        .then((json) => { if (json.ok) entry[field] = `data:${json.mime};base64,${json.data}`; return entry[field] || ''; })
+        .catch(() => '') // 못 불러오면 빈 칸으로 둔다
+        .finally(() => { entry[pending] = null; });
+    }
+    return entry[pending];
   }
 
   // 작은 사진은 세 장씩만 동시에 요청한다
@@ -352,16 +375,16 @@
     return dlg;
   }
 
-  async function openPhoto(entry) {
+  async function openPhoto(entry, caption) {
     const dlg = lightbox();
     const img = $('img', dlg);
     img.src = entry.full || entry.thumb || '';
-    $('.cap', dlg).textContent = [fmtDate(entry.t), entry.by].filter(Boolean).join('  ');
+    $('.cap', dlg).textContent = [caption, fmtDate(entry.t), entry.by].filter(Boolean).join('  ');
     dlg.showModal();
     if (!entry.full) { const url = await fetchImage(entry, 'photo', 'full'); if (url && dlg.open) img.src = url; }
   }
 
-  // 방금 올린 사진을 목록에 바로 넣는다 (시험 모드에서는 이 기기에 저장해 새로 열어도 남는다)
+  // 방금 올린 사진을 화면에 바로 넣는다 (시험 모드에서는 이 기기에 저장해 새로 열어도 남는다)
   async function smallDataUrl(blob, edge = 720) {
     const bmp = await createImageBitmap(blob);
     const s = Math.min(1, edge / Math.max(bmp.width, bmp.height));
@@ -372,201 +395,120 @@
     return c.toDataURL('image/jpeg', 0.72);
   }
 
-  async function remember(store, kind, blob, res) {
-    const entry = { id: res.fileId || `local-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, name: res.fileName || '', t: new Date().toISOString(), by: me ? me.name : '', local: true };
+  // 같은 자리에 올리면 이전 사진을 바꾼다. 바꾼 것이면 true
+  async function remember(store, kind, slot, blob, res) {
+    const entry = { id: res.fileId || `local-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, name: res.fileName || '', slot, t: new Date().toISOString(), by: me ? me.name : '', local: true };
+    const b = book(store.code);
+    const replaced = b[kind].some((e) => e.slot === slot);
     if (DEMO) {
       entry.thumb = entry.full = await smallDataUrl(blob);
       const all = localJson('demo-photos');
       const mineList = all[store.code] || { before: [], after: [] };
-      mineList[kind].unshift({ ...entry, local: false });
+      mineList[kind] = [{ ...entry, local: false }, ...(mineList[kind] || []).filter((e) => e.slot !== slot)];
       all[store.code] = mineList;
       ls.set('demo-photos', JSON.stringify(all)); // 가득 차면 이번 화면에서만 보인다
     } else {
       entry.thumb = entry.full = URL.createObjectURL(blob);
     }
-    book(store.code)[kind].unshift(entry);
+    b[kind] = [entry, ...b[kind].filter((e) => e.slot !== slot)];
+    return replaced;
   }
 
-  // ---------- 점포 ----------
-  const up = { kind: 'before', files: [], busy: false, finished: null, enterPanel: false, notice: '' };
+  // 점포 목록의 완료 표시에 쓰는 장수를 맞춘다
+  function recount(code, kind, replaced) {
+    const b = book(code);
+    const cur = data.status[code] || [0, 0, '', ''];
+    const next = [cur[0] || 0, cur[1] || 0, new Date().toISOString(), cur[3] || ''];
+    if (b.loaded) { next[0] = slotCount(b.before); next[1] = slotCount(b.after); }
+    else if (!replaced) next[kind === 'before' ? 0 : 1] += 1;
+    data.status[code] = next;
+    if (DEMO) ls.set('demo-status', JSON.stringify(data.status));
+  }
+
+  // ---------- 점포: 항목마다 기존 사진 / 개선 사진 ----------
   const nav = { back: '#/' };
-
-  function resetUpload(kind) {
-    up.files.forEach((f) => f.url && URL.revokeObjectURL(f.url));
-    Object.assign(up, { kind: kind || up.kind, files: [], busy: false, finished: null, enterPanel: false, notice: '' });
-  }
 
   function renderStore(code) {
     const store = data.byCode.get(code);
     if (!store) { view.replaceChildren(h('div', { class: 'wrap' }, h('p', { class: 'empty', text: '없는 점포예요.' }), h('a', { class: 'btn block', href: '#/', text: '처음으로' }))); return; }
     document.title = `${store.name} | 빽다방 홍보물 취합`;
-    if (render.lastCode !== code) { resetUpload('before'); render.lastCode = code; }
 
-    const root = h('div', { class: 'wrap' });
-    const seg = h('div', { class: 'seg big', role: 'tablist', 'aria-label': '사진 종류' });
-    const panelHost = h('div', {});
-    const galleryHost = h('div', {});
-    const dock = h('div', { class: 'dock' });
+    const working = new Map(); // "before:front" -> { state: 'up' | 'error', file, url }  올리는 중이거나 실패한 칸
+    let notice = '';
+    const sheetHost = h('div', {});
+    const progress = h('p', { class: 'progress' });
     const folder = isManager() ? (stat(code).folder || (DEMO ? data.links.folder : '')) : '';
 
-    // 점포당 현재 상태·개선 후 각각 MAX장까지. 드라이브에서 불러온 목록이 있으면 그 장수가 기준
-    const have = (kind) => { const b = book(code); return b.loaded ? b[kind].length : Math.max(stat(code)[kind], b[kind].length); };
-    const room = () => Math.max(0, MAX - have(up.kind) - up.files.filter((f) => f.state !== 'done').length);
-
-    function tab(kind) {
-      const n = have(kind);
-      return h('button', {
-        type: 'button', role: 'tab', 'aria-selected': String(up.kind === kind),
-        onclick: () => { if (up.busy || up.kind === kind) return; resetUpload(kind); up.enterPanel = true; paint(); },
-      }, h('b', { text: KIND[kind] }), h('small', { text: n >= MAX ? `${MAX}/${MAX}장 모두 올렸어요` : (n ? `${n}/${MAX}장 올렸어요` : '아직 없어요') }));
-    }
-
-    function paintGallery() {
-      seg.replaceChildren(tab('before'), tab('after'));
+    function cell(kind, slot, label) {
       const b = book(code);
-      const list = b[up.kind];
-      if (!list.length) {
-        galleryHost.replaceChildren(b.loading ? h('p', { class: 'hint', text: '올린 사진을 불러오는 중이에요' }) : '');
-        return;
+      const st = working.get(`${kind}:${slot}`);
+      const entry = b[kind].find((e) => e.slot === slot);
+      const col = COL[kind];
+      const pick = h('input', { type: 'file', accept: 'image/*', disabled: !(b.loaded || b.failed), 'aria-label': `${label} ${col} 고르기`,
+        onchange: (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) send(kind, slot, f); } });
+      if (!entry && !st) {
+        return h('label', { class: `cell empty${b.loaded || b.failed ? '' : ' wait'}` }, pick, h('b', { text: '+' }), h('small', { text: col }));
       }
-      galleryHost.replaceChildren(h('section', { class: 'gallery', 'aria-label': `올린 ${KIND[up.kind]} 사진` },
-        h('h2', { text: `올린 사진 ${list.length}장` }),
-        h('ul', { class: 'thumbs' }, list.map((e) => {
-          const img = h('img', { alt: '', loading: 'lazy' });
-          queueThumb(e, img);
-          return h('li', { class: 'thumb' }, h('button', { type: 'button', class: 'shot', 'aria-label': `올린 사진 크게 보기${e.t ? `, ${fmtDate(e.t)}` : ''}`, onclick: () => openPhoto(e) }, img));
-        }))));
+      const img = h('img', { alt: `${label} ${col}` });
+      if (st) img.src = st.url; else queueThumb(entry, img);
+      const shot = st
+        ? h('div', { class: 'shot' }, img)
+        : h('button', { type: 'button', class: 'shot', 'aria-label': `${label} ${col} 크게 보기`, onclick: () => openPhoto(entry, `${label} ${col}`) }, img);
+      return h('div', { class: 'cell filled', 'data-state': st ? st.state : 'ok' }, shot,
+        st && st.state === 'up' ? h('span', { class: 'st', text: '올리는 중' }) : null,
+        st && st.state === 'error' ? h('button', { type: 'button', class: 'st retry', onclick: () => send(kind, slot, st.file), text: '실패, 다시 시도' }) : null,
+        !st ? h('label', { class: 'swap' }, pick, '바꾸기') : null);
     }
 
-    function paint() {
-      const kind = up.kind;
-      const fileInput = h('input', { type: 'file', accept: 'image/*', multiple: true, onchange: (e) => { addFiles([...e.target.files]); e.target.value = ''; } });
-      const thumbs = h('ul', { class: 'thumbs' }, up.files.map((f, i) => h('li', { class: f.shown ? 'thumb' : 'thumb enter', 'data-state': f.state },
-        h('img', { src: f.url, alt: `선택한 사진 ${i + 1}` }),
-        f.state === 'idle' && !up.busy ? h('button', { type: 'button', class: 'x', 'aria-label': `사진 ${i + 1} 빼기`, onclick: () => removeFile(i), text: '×' }) : null,
-        f.state !== 'idle' ? h('span', { class: 'st', text: ({ up: '올리는 중', done: '완료', error: '실패' })[f.state] }) : null)));
-      up.files.forEach((f) => { f.shown = true; });
-
-      const finished = up.finished && !up.finished.failed && up.finished.ok > 0;
-      const full = !finished && have(kind) >= MAX && !up.files.length; // 이미 MAX장을 올린 상태
-      const failedBox = up.finished && up.finished.failed;
-      const panel = h('section', { class: up.enterPanel ? 'panel enter' : 'panel', 'aria-label': KIND[kind] },
-        finished ? doneBox() : (full ? limitBox() : [
-          h('p', { class: 'hint', text: `${kind === 'before' ? '고치기 전, 지금 붙어 있는 홍보물을 찍어 주세요.' : '교체하거나 고친 뒤의 모습을 찍어 주세요.'} 최대 ${MAX}장까지 올릴 수 있어요.` }),
-          room() > 0 ? picker(fileInput) : null,
-          up.notice ? h('p', { class: 'form-note', role: 'status', text: up.notice }) : null,
-          up.files.length ? thumbs : null,
-          failedBox ? h('p', { class: 'form-note', role: 'alert', text: up.finished.badCode
-            ? '접속 코드가 맞지 않아 올리지 못했어요. 로그아웃한 뒤 코드를 다시 입력해 주세요.'
-            : (up.finished.limit ? `이미 ${MAX}장을 모두 올려서 더 올릴 수 없어요.` : `${up.finished.failed}장을 올리지 못했어요. 연결을 확인하고 다시 눌러 주세요.`) }) : null,
-        ]));
-      up.enterPanel = false;
-      panelHost.replaceChildren(panel);
-      paintGallery();
-
-      const pending = up.files.filter((f) => f.state !== 'done').length;
-      if (finished || full) { dock.hidden = true; return; }
-      dock.hidden = false;
-      dock.replaceChildren(h('div', { class: 'wrap' },
-        h('button', { type: 'button', class: 'btn primary block', disabled: !pending || up.busy, onclick: submit },
-          up.busy ? '올리는 중' : pending ? `${pending}장 올리기` : '사진을 먼저 골라 주세요')));
+    function paintTable() {
+      const b = book(code);
+      const nb = b.loaded ? slotCount(b.before) : stat(code).before;
+      const na = b.loaded ? slotCount(b.after) : stat(code).after;
+      progress.textContent = `기존 사진 ${nb}/${SLOT_TOTAL} · 개선 사진 ${na}/${SLOT_TOTAL}`;
+      sheetHost.replaceChildren(...[
+        notice ? h('p', { class: 'form-note', role: 'alert', text: notice }) : null,
+        b.loading ? h('p', { class: 'hint', text: '올린 사진을 불러오는 중이에요' }) : null,
+        b.failed ? h('p', { class: 'hint', text: '올린 사진을 불러오지 못했어요. 새로 올리는 것은 그대로 됩니다.' }) : null,
+        h('div', { class: 'sheet' },
+          h('div', { class: 'sheet-cols', 'aria-hidden': 'true' }, h('span', { text: '항목' }), h('span', { text: COL.before }), h('span', { text: COL.after })),
+          SECTIONS.map((sec) => h('section', { class: 'grp', 'aria-label': sec.title },
+            h('h2', { text: sec.title }),
+            sec.items.map(([slot, label, desc]) => h('div', { class: 'srow' },
+              h('div', { class: 'lbl' }, h('b', { text: label }), desc ? h('small', { text: desc }) : null),
+              cell('before', slot, label), cell('after', slot, label))))))].filter(Boolean));
     }
 
-    // 사진 고르기 칸: 누르면 고르기, PC에서는 끌어다 놓기도 된다
-    function picker(fileInput) {
-      const el = h('label', { class: 'picker' }, fileInput,
-        h('b', { text: up.files.length ? '사진 더 고르기' : '사진 찍기 또는 고르기' }),
-        h('small', { text: `${room()}장 더 올릴 수 있어요` }),
-        h('small', { class: 'drop-note', text: '사진을 여기로 끌어다 놓아도 돼요' }));
-      el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add('drag'); });
-      el.addEventListener('dragleave', () => el.classList.remove('drag'));
-      el.addEventListener('drop', (e) => { e.preventDefault(); el.classList.remove('drag'); addFiles([...e.dataTransfer.files]); });
-      return el;
-    }
-
-    function limitBox() {
-      const canAfter = up.kind === 'before' && have('after') < MAX;
-      return h('div', { class: 'done', role: 'status' },
-        h('span', { class: 'check', 'aria-hidden': 'true', html: '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>' }),
-        h('h2', { text: `${KIND[up.kind]} 사진을 ${MAX}장 모두 올렸어요` }),
-        h('div', { class: 'actions' },
-          canAfter ? h('button', { type: 'button', class: 'btn primary block', onclick: () => { resetUpload('after'); up.enterPanel = true; paint(); } }, '개선 후 사진 올리기') : null,
-          h('a', { class: canAfter ? 'btn ghost block' : 'btn primary block', href: nav.back }, '다른 점포 찾기')));
-    }
-
-    function doneBox() {
-      const box = h('div', { class: 'done enter', role: 'status' },
-        h('span', { class: 'check', 'aria-hidden': 'true', html: '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>' }),
-        h('h2', { text: `${KIND[up.kind]} 사진 ${up.finished.ok}장을 올렸어요` }),
-        h('div', { class: 'actions' },
-          up.kind === 'before' ? h('button', { type: 'button', class: 'btn primary block', onclick: () => { resetUpload('after'); up.enterPanel = true; paint(); } }, '개선 후 사진 올리기') : null,
-          h('a', { class: up.kind === 'before' ? 'btn ghost block' : 'btn primary block', href: nav.back }, '다른 점포 찾기')));
-      if (up.finished.shown) box.classList.remove('enter');
-      up.finished.shown = true;
-      return box;
-    }
-
-    function removeFile(i) { const [f] = up.files.splice(i, 1); URL.revokeObjectURL(f.url); paint(); }
-
-    function addFiles(list) {
-      const free = room();
-      const imgs = list.filter((f) => f.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif)$/i.test(f.name));
-      imgs.slice(0, free).forEach((file) => up.files.push({ file, url: URL.createObjectURL(file), state: 'idle' }));
-      up.notice = imgs.length > free ? (free ? `${free}장만 더 올릴 수 있어서 앞의 ${free}장만 골랐어요.` : `이미 ${MAX}장을 모두 올렸어요.`) : '';
-      up.finished = null;
-      paint();
-    }
-
-    async function submit() {
-      if (up.busy) return;
-      up.busy = true; up.finished = null; paint();
-      let failed = 0, badCode = false, limit = false;
-      for (const f of up.files) {
-        if (f.state === 'done') continue;
-        f.state = 'up'; paint();
-        try {
-          const blob = await compress(f.file);
-          const res = await sendPhoto(store, up.kind, f.file.name, blob);
-          await remember(store, up.kind, blob, res || {});
-          f.state = 'done';
-          bump(code, up.kind);
-        } catch (err) {
-          f.state = 'error'; failed += 1;
-          if (err && err.code === 'bad_code') { badCode = true; break; }
-          if (err && err.code === 'limit') { limit = true; break; }
-        }
-        paint();
+    // 사진을 고르면 그 자리에 바로 올린다
+    async function send(kind, slot, file) {
+      const key = `${kind}:${slot}`;
+      const prev = working.get(key);
+      if (prev && prev.state === 'up') return;
+      if (prev && prev.file !== file) URL.revokeObjectURL(prev.url);
+      const st = { state: 'up', file, url: prev && prev.file === file ? prev.url : URL.createObjectURL(file) };
+      working.set(key, st); notice = ''; paintTable();
+      try {
+        const blob = await compress(file);
+        const res = await sendPhoto(store, kind, slot, file.name, blob);
+        const replaced = await remember(store, kind, slot, blob, res || {});
+        URL.revokeObjectURL(st.url); working.delete(key);
+        recount(code, kind, replaced);
+      } catch (err) {
+        st.state = 'error';
+        if (err && err.code === 'bad_code') notice = '접속 코드가 맞지 않아 올리지 못했어요. 로그아웃한 뒤 코드를 다시 입력해 주세요.';
       }
-      up.busy = false;
-      if (limit) { book(code).loaded = false; loadPhotos(store); } // 드라이브의 실제 장수를 다시 불러온다
-      up.finished = { ok: up.files.filter((f) => f.state === 'done').length, failed, badCode, limit };
-      paint();
-      const box = $('.done', panelHost);
-      if (box) box.scrollIntoView({ block: 'center', behavior: reduceMotion() ? 'auto' : 'smooth' });
+      if (storeView && storeView.code === code) storeView.paintTable(); // 그 사이 다른 화면에 갔다 왔어도 지금 열린 화면에 그린다
     }
 
-    // 휴대폰: 위에서 아래로. PC: 왼쪽에 점포 정보와 탭, 오른쪽에 사진 올리기와 올린 사진
-    root.append(
+    view.replaceChildren(h('div', { class: 'wrap' },
       h('a', { class: 'back', href: nav.back }, nav.back === '#/' ? '‹ 처음' : '‹ 목록'),
-      h('div', { class: 'store-grid' },
-        h('div', { class: 'store-side' },
-          h('h1', { class: 'store-name', text: store.name }),
-          h('p', { class: 'sub', text: [store.team, store.sv && `${store.sv} 담당`].filter(Boolean).join(' ') }),
-          seg,
-          folder ? h('div', { class: 'shortcuts side' }, externalLink('이 점포 드라이브 폴더 열기', folder)) : null),
-        h('div', { class: 'store-main' }, panelHost, dock, galleryHost)));
-    view.replaceChildren(root);
-    storeView = { code, paintGallery };
-    paint();
+      h('h1', { class: 'store-name', text: store.name }),
+      h('p', { class: 'sub', text: [store.team, store.sv && `${store.sv} 담당`].filter(Boolean).join(' ') }),
+      progress,
+      folder ? h('div', { class: 'shortcuts side' }, externalLink('이 점포 드라이브 폴더 열기', folder)) : null,
+      sheetHost));
+    storeView = { code, paintTable };
+    paintTable();
     loadPhotos(store);
-  }
-
-  function bump(code, kind) {
-    const cur = data.status[code] || [0, 0, '', ''];
-    const next = [cur[0] || 0, cur[1] || 0, new Date().toISOString(), cur[3] || ''];
-    next[kind === 'before' ? 0 : 1] += 1;
-    data.status[code] = next;
-    if (DEMO) ls.set('demo-status', JSON.stringify(data.status));
   }
 
   // ---------- 사진 처리·전송 ----------
@@ -596,11 +538,11 @@
     r.readAsDataURL(blob);
   });
 
-  async function sendPhoto(store, kind, name, blob) {
+  async function sendPhoto(store, kind, slot, name, blob) {
     if (DEMO) { await new Promise((r) => setTimeout(r, 350)); return {}; }
     const payload = {
       action: 'upload', code: ls.get('accessCode'), uploader: me ? me.name : '',
-      storeCode: store.code, storeName: store.name, kind,
+      storeCode: store.code, storeName: store.name, kind, slot,
       fileName: name, mime: 'image/jpeg', data: await toBase64(blob),
     };
     let lastErr;
@@ -624,7 +566,6 @@
     const hash = location.hash || '#/';
     let m = hash.match(/^#\/store\/(.+)$/);
     if (m) { renderStore(decodeURIComponent(m[1])); window.scrollTo(0, 0); return; }
-    render.lastCode = null;
     storeView = null;
     m = hash.match(/^#\/list\/(.+)$/);
     if (m) { nav.back = hash; renderList(decodeURIComponent(m[1])); } else { nav.back = '#/'; renderHome(); }
