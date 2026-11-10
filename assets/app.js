@@ -64,7 +64,12 @@
   function ingest(json) {
     let stores = json.stores || [];
     if (json.rows) stores = json.rows.map((r) => Object.fromEntries(json.cols.map((c, i) => [c, r[i]])));
-    data.stores = stores.map((s) => ({ ...s, code: String(s.code || s.name) }));
+    // 검색에 쓸 글자는 점포마다 한 번만 미리 만들어 둔다(점포가 1,800곳이어도 글자를 칠 때마다 다시 계산하지 않게)
+    data.stores = stores.map((s) => {
+      const o = { ...s, code: String(s.code || s.name) };
+      o._n = norm(o.name); o._c = cho(o.name); o._svn = norm(o.sv); o._svc = cho(o.sv || ''); o._tn = norm(o.team); o._kn = norm(o.code);
+      return o;
+    });
     data.byCode = new Map(data.stores.map((s) => [s.code, s]));
     data.links = json.links || {};
     me = json.me || null;
@@ -82,12 +87,7 @@
   }
 
   // ---------- 접속 IP (로그인 기록용) ----------
-  // 구글 스크립트는 접속자 IP를 알 수 없어서, 사이트가 무료 IP 조회 서비스에서 IP와 대략의 지역을 받아 로그인 기록으로 보낸다.
-  const REGION_KO = {
-    Seoul: '서울', Busan: '부산', Incheon: '인천', Daegu: '대구', Daejeon: '대전', Gwangju: '광주', Ulsan: '울산', Sejong: '세종',
-    'Gyeonggi-do': '경기', 'Gangwon-do': '강원', 'North Chungcheong': '충북', 'South Chungcheong': '충남', 'North Jeolla': '전북', 'South Jeolla': '전남',
-    'North Gyeongsang': '경북', 'South Gyeongsang': '경남', 'Jeju-do': '제주',
-  };
+  // 구글 스크립트는 접속자 IP를 알 수 없어서, 사이트가 무료 IP 확인 서비스(ipify)에서 IP만 받아 로그인 기록으로 보낸다. 위치는 조회하지도 저장하지도 않는다.
   let ipPromise = null;
   function lookupIp() {
     if (ipPromise) return ipPromise;
@@ -97,19 +97,10 @@
       try { return await (await fetch(url, { signal: ac.signal })).json(); } finally { clearTimeout(timer); }
     };
     ipPromise = (async () => {
-      try {
-        const j = await grab('https://ipwho.is/');
-        if (j && j.success && j.ip) {
-          const country = j.country_code === 'KR' ? '' : (j.country || '');
-          const loc = [country, REGION_KO[j.region] || j.region || '', j.city || ''].filter(Boolean).join(' ').slice(0, 40);
-          return { ip: String(j.ip), loc };
-        }
-      } catch { /* 다음 서비스로 */ }
-      try {
-        const j = await grab('https://api.ipify.org?format=json');
-        if (j && j.ip) return { ip: String(j.ip), loc: '' };
-      } catch { /* 조회하지 못해도 로그인은 그대로 된다 */ }
-      return null;
+      for (const url of ['https://api.ipify.org?format=json', 'https://api64.ipify.org?format=json']) {
+        try { const j = await grab(url); if (j && j.ip) return { ip: String(j.ip) }; } catch { /* 다음 주소로 */ }
+      }
+      return null; // 조회하지 못해도 로그인은 그대로 된다
     })();
     return ipPromise;
   }
@@ -119,7 +110,13 @@
     if (DEMO) return;
     const info = await lookupIp();
     if (!info) return;
-    try { await getJson({ action: 'track', via, ip: info.ip, loc: info.loc }); } catch { /* 무시 */ }
+    try { await getJson({ action: 'track', via, ip: info.ip }); } catch { /* 무시 */ }
+  }
+
+  // 구글 스크립트로 값을 보낸다(사진처럼 큰 값은 주소가 아니라 본문에 담는다)
+  async function postJson(payload) {
+    const res = await fetch(cfg.endpoint, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ code: ls.get('accessCode'), ...payload }) });
+    return res.json();
   }
 
   // 접속코드로 로그인한다. 정상이면 me(이름·팀·구분)와 점포 목록이 채워진다.
@@ -228,13 +225,14 @@
     const q = norm(query);
     const jamo = /^[ㄱ-ㅎ]+$/.test(q);
     const hits = [];
+    const sq = jamo ? single(q) : '';
     for (const s of pool) {
-      const name = norm(s.name);
+      const name = s._n;
       let score = 0;
-      if (jamo) { if (cho(name).includes(single(q)) || cho(s.sv || '').includes(single(q))) score = 3; }
+      if (jamo) { if (s._c.includes(sq) || s._svc.includes(sq)) score = 3; }
       else if (name.startsWith(q)) score = 5;
       else if (name.includes(q)) score = 4;
-      else if (norm(s.sv).includes(q) || norm(s.team).includes(q) || norm(s.code).includes(q)) score = 2;
+      else if (s._svn.includes(q) || s._tn.includes(q) || s._kn.includes(q)) score = 2;
       if (score) hits.push([score, s]);
     }
     hits.sort((a, b) => b[0] - a[0] || a[1].name.localeCompare(b[1].name, 'ko'));
@@ -291,8 +289,8 @@
   }
 
   // 불러오는 동안 보여주는 스피너
-  const spinnerSvg = (size, stroke) => h('span', { class: 'spinbox', 'aria-hidden': 'true',
-    html: `<svg class="spinner" width="${size}" height="${size}" viewBox="0 0 40 40" fill="none"><circle cx="20" cy="20" r="16" stroke="#e4e4e4" stroke-width="${stroke}"/><path d="M20 4a16 16 0 0 1 16 16" stroke="#000" stroke-width="${stroke}" stroke-linecap="round"/></svg>` });
+  const spinnerSvg = (size, stroke, onDark) => h('span', { class: 'spinbox', 'aria-hidden': 'true',
+    html: `<svg class="spinner" width="${size}" height="${size}" viewBox="0 0 40 40" fill="none"><circle cx="20" cy="20" r="16" stroke="${onDark ? '#555' : '#e4e4e4'}" stroke-width="${stroke}"/><path d="M20 4a16 16 0 0 1 16 16" stroke="${onDark ? '#fff' : '#000'}" stroke-width="${stroke}" stroke-linecap="round"/></svg>` });
   const loadingBlock = (text) => h('div', { class: 'loading', role: 'status', 'aria-live': 'polite' }, spinnerSvg(40, 4), h('span', { text }));
 
   // 저장 완료 같은 짧은 알림(스낵바). 아래에 떴다가 몇 초 뒤 사라진다.
@@ -355,11 +353,14 @@
       const list = h('ul', { class: 'rows', 'aria-live': 'polite' });
       if (!found.length) list.append(h('li', { class: 'empty', text: '찾는 점포가 없어요. 점포명 일부나 담당자 이름으로 다시 찾아보세요.' }));
       found.slice(0, shown).forEach((s) => list.append(row(s, true)));
-      resultsHost.replaceChildren(
+      // 비어 있는 값(null)을 그대로 넘기면 화면에 "null" 글자가 찍히므로 걸러서 넘긴다
+      resultsHost.replaceChildren(...[
         h('p', { class: 'meta-line', text: `${found.length}곳` }), list,
-        found.length > shown ? h('button', { type: 'button', class: 'btn ghost block more', onclick: () => { shown += PAGE; paintResults(); } }, `더 보기 (${found.length - shown}곳 남음)`) : null);
+        found.length > shown ? h('button', { type: 'button', class: 'btn ghost block more', onclick: () => { shown += PAGE; paintResults(); } }, `더 보기 (${found.length - shown}곳 남음)`) : null,
+      ].filter(Boolean));
     }
-    input.addEventListener('input', () => { shown = PAGE; paintResults(); });
+    let typing = null; // 글자를 치는 동안에는 잠깐 모았다가 한 번만 찾는다
+    input.addEventListener('input', () => { clearTimeout(typing); typing = setTimeout(() => { shown = PAGE; paintResults(); }, 90); });
     clear.addEventListener('click', () => { input.value = ''; shown = PAGE; paintResults(); input.focus(); });
 
     view.replaceChildren(h('div', { class: 'wrap' },
@@ -409,6 +410,7 @@
     const b = book(store.code);
     if (b.loaded || b.loading) return;
     b.loading = true; b.failed = false;
+    if (storeView && storeView.code === store.code) storeView.paintTable(); // 받는 중이라는 스피너를 바로 보여준다
     try {
       if (DEMO) {
         const all = localJson('demo-photos')[store.code] || {};
@@ -479,16 +481,53 @@
         } catch { resolve(undefined); }
       });
     };
-    return { get: (id) => run('readonly', (s) => s.get(id)), put: (id, url) => run('readwrite', (s) => s.put(url, id)) };
+    return { get: (id) => run('readonly', (s) => s.get(id)), put: (id, url) => run('readwrite', (s) => s.put(url, id)), del: (id) => run('readwrite', (s) => s.delete(id)) };
   })();
 
-  // 목록에 같이 오지 않은 작은 사진을 채운다: 이 기기에 남은 것 먼저, 나머지는 6장씩 묶어 한꺼번에(동시에 3묶음)
+  const repaintStore = (code) => { if (storeView && storeView.code === code) storeView.paintTable(); };
+
+  // 큰 사진을 작은 미리보기로 줄인다(주소 글자 → 작은 jpg 주소 글자)
+  function shrinkDataUrl(dataUrl, edge = 360, quality = 0.7) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const s = Math.min(1, edge / Math.max(img.naturalWidth, img.naturalHeight));
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(img.naturalWidth * s)); c.height = Math.max(1, Math.round(img.naturalHeight * s));
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        resolve(c.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => reject(new Error('열 수 없는 사진'));
+      img.src = dataUrl;
+    });
+  }
+
+  // 서버가 작은 사진을 못 만든 사진(드라이브가 아직 안 만들었고 원본이 큰 경우)은, 원본을 받아 여기서 줄여 만든다.
+  // 만든 것은 이 기기에 남겨 두고, 서버 기억에도 채워서 다음 사람은 바로 보게 한다.
+  async function repairThumb(store, e) {
+    if (e.repairing) return;
+    e.repairing = true; e.thumbFailed = false;
+    try {
+      const url = await fetchImage(e, 'photo', 'full');
+      if (!url) throw new Error('원본을 받지 못했어요');
+      const small = await shrinkDataUrl(url);
+      e.thumb = small;
+      e.full = ''; // 큰 원본은 메모리에서 비운다(크게 볼 때 다시 받는다)
+      thumbDB.put(e.id, small);
+      if (!DEMO) postJson({ action: 'put_thumb', store: store.code, name: store.name, id: e.id, thumb: small.split(',')[1] }).catch(() => {});
+    } catch { e.thumbFailed = true; }
+    e.repairing = false;
+    repaintStore(store.code);
+  }
+
+  // 목록에 같이 오지 않은 작은 사진을 채운다: ① 이 기기에 남은 것 ② 서버가 가진 것(6장씩 묶어 한꺼번에, 동시에 3묶음) ③ 그래도 없으면 원본을 받아 직접 만들기(동시에 2장)
   async function fillThumbs(store) {
     const b = book(store.code);
     const need = [...b.before, ...b.after].filter((e) => !e.thumb && !e.local);
     if (!need.length) return;
+    need.forEach((e) => { e.thumbFailed = false; });
     await Promise.all(need.map(async (e) => { const u = await thumbDB.get(e.id); if (u) e.thumb = u; }));
-    if (storeView && storeView.code === store.code) storeView.paintTable();
+    repaintStore(store.code);
     const rest = need.filter((e) => !e.thumb);
     const groups = [];
     for (let i = 0; i < rest.length; i += 6) groups.push(rest.slice(i, i + 6));
@@ -499,21 +538,24 @@
         try {
           const json = await getJson({ action: 'thumbs', store: store.code, name: store.name, ids: g.map((e) => e.id).join(',') });
           if (json.ok) for (const e of g) { const u = json.items && json.items[e.id]; if (u) { e.thumb = u; thumbDB.put(e.id, u); } }
-        } catch { /* 못 받으면 빈 칸으로 두고, 눌러서 크게 볼 수 있다 */ }
-        if (storeView && storeView.code === store.code) storeView.paintTable();
+        } catch { /* 못 받으면 아래에서 원본으로 직접 만든다 */ }
+        repaintStore(store.code);
       }
     };
     await Promise.all([worker(), worker(), worker()]);
+    const broken = need.filter((e) => !e.thumb);
+    let at = 0;
+    const fixer = async () => { while (at < broken.length) { const e = broken[at]; at += 1; await repairThumb(store, e); } };
+    await Promise.all([fixer(), fixer()]);
   }
-
-  function queueThumb(entry, img) { if (entry.thumb) img.src = entry.thumb; }
 
   function lightbox() {
     let dlg = $('#lightbox');
     if (dlg) return dlg;
     dlg = h('dialog', { id: 'lightbox', 'aria-label': '올린 사진' },
       h('button', { type: 'button', class: 'lb-close', 'aria-label': '닫기', onclick: () => dlg.close() }, '×'),
-      h('img', { alt: '올린 사진' }), h('p', { class: 'cap' }));
+      h('div', { class: 'lb-stage' }, h('img', { alt: '올린 사진' }), h('div', { class: 'lb-spin', role: 'status', hidden: true }, spinnerSvg(40, 4, true))),
+      h('p', { class: 'cap' }));
     dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
     document.body.append(dlg);
     return dlg;
@@ -521,11 +563,19 @@
 
   async function openPhoto(entry, caption) {
     const dlg = lightbox();
-    const img = $('img', dlg);
+    const img = $('img', dlg), spin = $('.lb-spin', dlg), cap = $('.cap', dlg);
+    const text = [caption, fmtDate(entry.t), entry.by].filter(Boolean).join('  ');
+    img.removeAttribute('src');
     img.src = entry.full || entry.thumb || '';
-    $('.cap', dlg).textContent = [caption, fmtDate(entry.t), entry.by].filter(Boolean).join('  ');
+    cap.textContent = text;
     dlg.showModal();
-    if (!entry.full) { const url = await fetchImage(entry, 'photo', 'full'); if (url && dlg.open) img.src = url; }
+    if (!entry.full) {
+      spin.hidden = false; // 큰 사진을 받는 동안 스피너
+      const url = await fetchImage(entry, 'photo', 'full');
+      spin.hidden = true;
+      if (url && dlg.open) img.src = url;
+      else if (!url) cap.textContent = `${text}  (큰 사진을 불러오지 못했어요)`;
+    }
   }
 
   // 방금 올린 사진을 화면에 바로 넣는다 (시험 모드에서는 이 기기에 저장해 새로 열어도 남는다)
@@ -596,11 +646,21 @@
       if (!entry && !st) {
         return h('label', { class: 'cell blank' }, pick, h('span', { class: 'fill' }, h('b', { text: '+' }), h('small', { text: col })));
       }
-      const img = h('img', { alt: `${label} ${col}` });
-      if (st) img.src = st.url; else queueThumb(entry, img);
-      const shot = st
-        ? h('div', { class: 'shot' }, img)
-        : h('button', { type: 'button', class: 'shot', 'aria-label': `${label} ${col} 크게 보기`, onclick: () => openPhoto(entry, `${label} ${col}`) }, img);
+      let shot;
+      if (st) {
+        shot = h('div', { class: 'shot' }, h('img', { alt: `${label} ${col}`, src: st.url }));
+      } else if (entry.thumb) {
+        // 작은 사진이 깨져서 열리지 않으면 한 번 다시 만든다
+        const img = h('img', { alt: `${label} ${col}`, src: entry.thumb, onerror: () => { if (entry.thumbBad) { entry.thumbFailed = true; entry.thumb = ''; repaintStore(code); return; } entry.thumbBad = true; entry.thumb = ''; thumbDB.del(entry.id); repairThumb(store, entry); repaintStore(code); } });
+        shot = h('button', { type: 'button', class: 'shot', 'aria-label': `${label} ${col} 크게 보기`, onclick: () => openPhoto(entry, `${label} ${col}`) }, img);
+      } else if (entry.thumbFailed && !entry.repairing) {
+        // 작은 사진을 만들지 못했다: 눌러서 크게 보거나 다시 시도할 수 있다
+        shot = h('button', { type: 'button', class: 'shot failed', 'aria-label': `${label} ${col} 크게 보기`, onclick: () => { repairThumb(store, entry); openPhoto(entry, `${label} ${col}`); } },
+          h('b', { text: '미리보기를 못 불러왔어요' }), h('small', { text: '눌러서 크게 보기' }));
+      } else {
+        // 아직 받는 중: 스피너
+        shot = h('button', { type: 'button', class: 'shot waiting', 'aria-label': `${label} ${col} 불러오는 중`, onclick: () => openPhoto(entry, `${label} ${col}`) }, spinnerSvg(26, 5));
+      }
       return h('div', { class: 'cell filled', 'data-state': st ? st.state : 'ok' }, shot,
         st && st.state === 'up' ? h('div', { class: 'spin-over', role: 'status' }, spinnerSvg(30, 5)) : null,
         st && st.state !== 'error' ? h('span', { class: 'st', text: st.state === 'wait' ? '대기 중' : '올리는 중' }) : null,
@@ -663,7 +723,14 @@
         progress,
         folder ? h('div', { class: 'admin-tools left' }, externalLink('이 점포 드라이브 폴더 열기', folder)) : null),
       sheetHost)));
-    storeView = { code, paintTable };
+    // 작은 사진이 하나씩 도착할 때마다 표를 통째로 다시 그리지 않도록, 한 화면 프레임에 한 번만 그린다
+    let paintQueued = false;
+    const paintSoon = () => {
+      if (paintQueued) return;
+      paintQueued = true;
+      requestAnimationFrame(() => { paintQueued = false; if (storeView && storeView.code === code) paintTable(); });
+    };
+    storeView = { code, paintTable: paintSoon };
     paintTable();
     loadPhotos(store);
   }
@@ -777,17 +844,17 @@
     }
     const netCard = h('div', { class: 'netcard' },
       h('div', { class: 'nettxt' },
-        h('div', {}, h('b', { text: '지금 접속한 IP ' }), h('span', { class: 'ipv', text: info ? info.ip : '확인하지 못했어요' }), info && info.loc ? h('small', { text: ` · ${info.loc}` }) : null),
+        h('div', {}, h('b', { text: '지금 접속한 IP ' }), h('span', { class: 'ipv', text: info ? info.ip : '확인하지 못했어요' })),
         h('p', { class: 'fine', text: internal.length ? `사내망으로 등록한 IP: ${internal.join(', ')}` : '아직 사내망 IP를 등록하지 않아 모든 접속이 "미분류"로 보여요. 회사에서 접속한 상태로 오른쪽 버튼을 눌러 등록하세요.' })),
       info ? h('button', { type: 'button', class: 'pill', onclick: toggleNet }, registered ? '사내망에서 빼기' : '이 IP를 사내망으로 등록') : null);
 
+    // 기록 한 줄: [시각, 이름, 구분, IP, 사내망/외부, 결과, 경로]
     const logRow = (l) => h('li', { class: 'logrow' },
       h('div', { class: 'lname' }, h('b', { text: l[1] }), l[2] ? h('small', { text: l[2] }) : null),
       h('div', { class: 'ltime', text: fmtDate(new Date(l[0]).toISOString()) }),
       h('div', { class: 'lip', text: l[3] }),
       h('div', { class: 'lnet' }, h('i', { class: `bd ${l[4] === '사내망' ? 'dark' : (l[4] === '외부' ? 'line' : 'soft')}`, text: l[4] })),
-      h('div', { class: 'lloc', text: l[5] || '확인 불가' }),
-      h('div', { class: 'lres' }, h('i', { class: `bd ${l[6] === '실패' ? 'dark' : 'soft'}`, text: l[6] })));
+      h('div', { class: 'lres' }, h('i', { class: `bd ${l[5] === '실패' ? 'dark' : 'soft'}`, text: l[5] })));
 
     let filter = '전체';
     const stat = (k, v) => h('div', { class: 'stat' }, h('div', { class: 'k', text: k }), h('div', { class: 'v', text: String(v) }));
@@ -800,9 +867,9 @@
         netCard,
         h('div', { class: 'segs inline', role: 'group', 'aria-label': '접속 구분', style: `--n:${opts.length}` },
           opts.map((n) => h('button', { type: 'button', class: n === filter ? 'segb on' : 'segb', 'aria-pressed': String(n === filter), onclick: () => { filter = n; paint(); } }, n))),
-        h('div', { class: 'loghead', 'aria-hidden': 'true' }, ['이름', '로그인 시각', 'IP', '구분', '대략 위치', '결과'].map((t) => h('span', { text: t }))),
+        h('div', { class: 'loghead', 'aria-hidden': 'true' }, ['이름', '로그인 시각', 'IP', '구분', '결과'].map((t) => h('span', { text: t }))),
         h('ul', { class: 'loglist' }, rows.length ? rows.map(logRow) : h('li', { class: 'empty', text: '기록이 없어요.' })),
-        h('p', { class: 'fine', text: '위치는 접속 IP로 추정한 대략적인 지역이라 실제와 다를 수 있어요. 사내망은 등록한 회사 IP 기준으로 구분해요.' }));
+        h('p', { class: 'fine', text: '사내망은 등록한 회사 IP 기준으로 구분해요. 접속 위치는 기록하지 않아요.' }));
     }
     paint();
   }
@@ -827,6 +894,14 @@
       h('span', { class: 'who' }, me.name, isManager() ? h('small', { text: '관리자' }) : null),
       h('button', { type: 'button', class: 'link', onclick: logout }, '로그아웃')));
   }
+
+  // 맨 위의 "빽다방 홍보물 취합"을 누르면 어디서든 첫 화면으로 돌아간다(이미 첫 화면이면 검색을 지우고 처음 상태로)
+  $('.brand')?.addEventListener('click', (e) => {
+    if (!me) return; // 로그인 화면에서는 기본 동작 그대로
+    e.preventDefault();
+    home.q = '';
+    if (!location.hash || location.hash === '#/') { render(); } else { location.hash = '#/'; }
+  });
 
   let routed = false;
   function begin() {

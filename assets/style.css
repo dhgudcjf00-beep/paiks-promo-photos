@@ -39,7 +39,8 @@ main { outline: none; padding-bottom: calc(40px + env(safe-area-inset-bottom, 0p
   max-width: 1040px; margin: 0 auto;
 }
 .brand { font-weight: 800; font-size: 17px; letter-spacing: -0.02em; }
-.brand span { font-weight: 500; color: var(--muted); }
+.brand { cursor: pointer; }
+.brand:active { opacity: 0.6; }
 .demo-tag { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; margin-right: auto; margin-left: 4px; }
 .who {
   display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: #fff;
@@ -310,6 +311,13 @@ main:has(.dock:not([hidden])) { padding-bottom: calc(110px + env(safe-area-inset
 .sgrid .store-name { margin-top: 6px; }
 .sgrid .back { padding-bottom: 0; }
 
+/* ---------- 사진 미리보기: 받는 중 / 못 받음 ---------- */
+.shot.waiting { display: flex; align-items: center; justify-content: center; background: var(--soft); }
+.shot.failed { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 10px; text-align: center; background: var(--soft); color: var(--muted); }
+.shot.failed b { font-size: 13px; font-weight: 700; }
+.shot.failed small { font-size: 12px; }
+.lb-stage { position: relative; }
+.lb-spin { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
 /* ---------- 로그인 기록 ---------- */
 .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 4px; }
 .stat { border: 1.5px solid var(--line); border-radius: 20px; padding: 14px 16px; }
@@ -321,14 +329,14 @@ main:has(.dock:not([hidden])) { padding-bottom: calc(110px + env(safe-area-inset
 .fine { margin: 6px 0 0; font-size: 12.5px; color: var(--muted); line-height: 1.6; }
 .loghead { display: none; }
 .loglist { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
-.logrow { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "name res" "time time" "ip net" "loc loc"; gap: 4px 10px; padding: 14px 4px; border-bottom: 1px solid var(--line); align-items: center; }
+.logrow { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "name res" "time time" "ip net"; gap: 4px 10px; padding: 14px 4px; border-bottom: 1px solid var(--line); align-items: center; }
 .logrow .lname { grid-area: name; }
 .logrow .lname b { font-size: 15.5px; }
 .logrow .lname small { margin-left: 6px; font-size: 12px; color: var(--muted); }
 .logrow .ltime { grid-area: time; font-size: 13px; color: var(--muted); }
 .logrow .lip { grid-area: ip; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .logrow .lnet { grid-area: net; }
-.logrow .lloc { grid-area: loc; font-size: 13px; color: var(--muted); }
+
 .logrow .lres { grid-area: res; }
 .bd { font-style: normal; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; }
 .bd.dark { background: var(--ink); color: #fff; }
@@ -388,9 +396,9 @@ main:has(.dock:not([hidden])) { padding-bottom: calc(110px + env(safe-area-inset
   .segs { max-width: 560px; }
   .admin-tools { margin-top: 36px; }
   .stats { gap: 16px; }
-  .loghead { display: grid; grid-template-columns: 150px 170px 160px 90px minmax(0, 1fr) 70px; gap: 12px; padding: 0 4px 10px; font-size: 12.5px; font-weight: 700; color: var(--muted); border-bottom: 1.5px solid var(--ink); }
-  .logrow { grid-template-columns: 150px 170px 160px 90px minmax(0, 1fr) 70px; grid-template-areas: "name time ip net loc res"; gap: 12px; padding: 16px 4px; }
-  .logrow .lloc, .logrow .ltime { font-size: 14px; }
+  .loghead { display: grid; grid-template-columns: 170px 190px minmax(0, 1fr) 100px 80px; gap: 12px; padding: 0 4px 10px; font-size: 12.5px; font-weight: 700; color: var(--muted); border-bottom: 1.5px solid var(--ink); }
+  .logrow { grid-template-columns: 170px 190px minmax(0, 1fr) 100px 80px; grid-template-areas: "name time ip net res"; gap: 12px; padding: 16px 4px; }
+  .logrow .ltime { font-size: 14px; }
   .netcard { flex-direction: row; align-items: center; justify-content: space-between; }
 }
 
