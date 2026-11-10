@@ -391,7 +391,7 @@
     const names = isManager() ? [...teamList(), '전체'] : [];
     const cur = key === 'all' ? '전체' : key;
     view.replaceChildren(h('div', { class: 'wrap' },
-      h('a', { class: 'back', href: '#/' }, '‹ 처음'),
+      h('a', { class: 'back', href: '#/', onclick: () => { home.q = ''; } }, '‹ 처음'),
       h('h1', { class: 'page-title', text: listTitle(key) }),
       h('p', { class: 'meta-line', text: `${pool.length}곳 중 ${left}곳을 아직 못 올렸어요` }),
       h('div', { class: 'meter', 'aria-hidden': 'true' }, h('i', { style: `width:${pct}%` })),
@@ -643,7 +643,6 @@
     let notice = '';
     const sheetHost = h('div', {});
     const progress = h('p', { class: 'progress' });
-    const folder = isManager() ? (stat(code).folder || (DEMO ? data.links.folder : '')) : '';
 
     function cell(kind, slot, label) {
       const b = book(code);
@@ -727,11 +726,10 @@
 
     view.replaceChildren(h('div', { class: 'wrap' }, h('div', { class: 'sgrid' },
       h('div', { class: 'sside' },
-        h('a', { class: 'back', href: nav.back }, nav.back === '#/' ? '‹ 처음' : '‹ 목록'),
+        h('a', { class: 'back', href: nav.back, onclick: () => { if (nav.back === '#/') home.q = ''; } }, nav.back === '#/' ? '‹ 처음' : '‹ 목록'),
         h('h1', { class: 'store-name', text: store.name }),
         h('p', { class: 'sub', text: [store.team, store.sv && `${store.sv} 담당`].filter(Boolean).join(' ') }),
-        progress,
-        folder ? h('div', { class: 'admin-tools left' }, externalLink('이 점포 드라이브 폴더 열기', folder)) : null),
+        progress),
       sheetHost)));
     // 작은 사진이 하나씩 도착할 때마다 표를 통째로 다시 그리지 않도록, 한 화면 프레임에 한 번만 그린다
     let paintQueued = false;
@@ -825,7 +823,7 @@
   async function renderLog() {
     document.title = '로그인 기록 | 빽다방 홍보물 취합';
     const token = ++logToken;
-    const back = h('a', { class: 'back', href: '#/' }, '‹ 처음');
+    const back = h('a', { class: 'back', href: '#/', onclick: () => { home.q = ''; } }, '‹ 처음');
     const shell = (...kids) => { if (token === logToken) view.replaceChildren(h('div', { class: 'wrap' }, back, h('h1', { class: 'page-title', text: '로그인 기록' }), ...kids)); };
     const denied = () => {
       if (token !== logToken) return;
