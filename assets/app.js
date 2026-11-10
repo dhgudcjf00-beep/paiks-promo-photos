@@ -486,20 +486,30 @@
 
   const repaintStore = (code) => { if (storeView && storeView.code === code) storeView.paintTable(); };
 
-  // 큰 사진을 작은 미리보기로 줄인다(주소 글자 → 작은 jpg 주소 글자)
-  function shrinkDataUrl(dataUrl, edge = 360, quality = 0.7) {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => {
-        const s = Math.min(1, edge / Math.max(img.naturalWidth, img.naturalHeight));
-        const c = document.createElement('canvas');
-        c.width = Math.max(1, Math.round(img.naturalWidth * s)); c.height = Math.max(1, Math.round(img.naturalHeight * s));
-        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-        resolve(c.toDataURL('image/jpeg', quality));
-      };
-      img.onerror = () => reject(new Error('열 수 없는 사진'));
-      img.src = dataUrl;
-    });
+  // 작은 미리보기를 만든다. 사진(파일 또는 data 주소)을 받아, 글자 길이가 maxChars 이하인 작은 jpg 주소 글자로 돌려준다.
+  // 서버는 이 글자를 사진 파일의 '설명' 칸에 붙여 영구 보관한다(칸이 2만 5천 자쯤까지만 받아서 1만 8천 자 이하로 맞춘다).
+  // 큰 변·낮은 화질부터 시작해 길이가 넘으면 조금씩 더 줄인다.
+  const THUMB_MAX_CHARS = 17500;
+  const THUMB_STEPS = [[320, 0.64], [300, 0.56], [280, 0.5], [260, 0.45], [240, 0.4], [200, 0.4], [160, 0.4]];
+  async function fitThumb(src, maxChars = THUMB_MAX_CHARS) {
+    let bmp;
+    if (typeof src === 'string') {
+      bmp = await new Promise((resolve, reject) => { const img = new Image(); img.onload = () => resolve(img); img.onerror = () => reject(new Error('열 수 없는 사진')); img.src = src; });
+    } else {
+      bmp = await createImageBitmap(src);
+    }
+    const w = bmp.naturalWidth || bmp.width, h = bmp.naturalHeight || bmp.height;
+    let out = '';
+    for (const [edge, quality] of THUMB_STEPS) {
+      const s = Math.min(1, edge / Math.max(w, h));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(w * s)); c.height = Math.max(1, Math.round(h * s));
+      c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+      out = c.toDataURL('image/jpeg', quality);
+      if (out.length - 23 <= maxChars) break; // 앞의 'data:image/jpeg;base64,' 23글자는 빼고 잰다
+    }
+    if (bmp.close) bmp.close();
+    return out;
   }
 
   // 서버가 작은 사진을 못 만든 사진(드라이브가 아직 안 만들었고 원본이 큰 경우)은, 원본을 받아 여기서 줄여 만든다.
@@ -510,7 +520,7 @@
     try {
       const url = await fetchImage(e, 'photo', 'full');
       if (!url) throw new Error('원본을 받지 못했어요');
-      const small = await shrinkDataUrl(url);
+      const small = await fitThumb(url);
       e.thumb = small;
       e.full = ''; // 큰 원본은 메모리에서 비운다(크게 볼 때 다시 받는다)
       thumbDB.put(e.id, small);
@@ -699,7 +709,7 @@
           st.state = 'up';
           if (storeView && storeView.code === code) storeView.paintTable();
           const blob = await compress(file);
-          const tiny = DEMO ? '' : await smallDataUrl(blob, 360, 0.7).catch(() => ''); // 서버가 목록에 바로 쓰도록 작은 사진을 함께 보낸다
+          const tiny = DEMO ? '' : await fitThumb(blob).catch(() => ''); // 서버가 사진에 붙여 영구 보관하도록 작은 사진을 함께 보낸다(1만 8천 자 이하)
           const res = await sendPhoto(store, kind, slot, file.name, blob, tiny);
           const replaced = await remember(store, kind, slot, blob, res || {}, tiny);
           URL.revokeObjectURL(st.url); working.delete(key);
