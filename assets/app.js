@@ -254,7 +254,7 @@
 
   // 아직 안 올린 점포가 위로, 업로드 완료 점포는 맨 아래로
   function byProgress(list) {
-    const n = (s) => { const t = stat(s.code); return t.complete ? 2000 : (t.confirmed || t.improved ? 1000 : Math.min(t.before, NEED) + Math.min(t.after, NEED)); };
+    const n = (s) => { const t = stat(s.code); return t.complete || t.confirmed || t.improved ? 2000 : Math.min(t.before, NEED) + Math.min(t.after, NEED); };
     return [...list].sort((a, b) => n(a) - n(b) || a.name.localeCompare(b.name, 'ko'));
   }
 
@@ -290,12 +290,12 @@
     const t = stat(s.code);
     const sub = isManager() ? (withTeam ? [s.team, s.sv] : [s.sv]).filter(Boolean).join(' ') : '';
     return h('li', {}, h('a', { class: 'row', href: `#/store/${enc(s.code)}`, 'aria-label': `${s.name}, 기존 사진 ${t.before}장, 개선 사진 ${t.after}장` },
-      h('span', { class: 'name' }, s.name, t.complete ? h('span', { class: 'okmark', title: '업로드 완료' }, ckIcon()) : null),
+      h('span', { class: 'name' }, s.name, (t.complete || t.improved || t.confirmed) ? h('span', { class: 'okmark', title: t.confirmed ? '확인완료' : (t.improved ? '개선 완료' : '업로드 완료') }, ckIcon()) : null),
       sub ? h('span', { class: 'sub', text: sub }) : null,
       h('span', { class: 'marks' },
         t.comments ? h('i', { class: 'mk cm', text: `코멘트 ${t.comments}` }) : null,
         t.complete ? h('i', { class: 'mk up' }, ckIcon(), '업로드 완료') : null,
-        t.confirmed ? h('i', { class: 'mk on', text: '확인완료' }) : (t.improved ? h('i', { class: 'mk on', text: '개선완료' }) : null),
+        t.confirmed ? h('i', { class: 'mk on' }, ckIcon(), '확인완료') : (t.improved ? h('i', { class: 'mk on' }, ckIcon(), '개선완료') : null),
         h('i', { class: t.before >= NEED ? 'mk on' : 'mk', text: `기존 ${t.before}` }),
         h('i', { class: t.after >= NEED ? 'mk on' : 'mk', text: `개선 ${t.after}` }))));
   }
@@ -402,7 +402,7 @@
     if (listState.key !== key) { listState.key = key; listState.shown = PAGE; }
     const full = byProgress(listPool(key));
     const left = full.filter((s) => !done(s)).length;
-    const pool = listState.hideDone ? full.filter((s) => !stat(s.code).complete) : full;
+    const pool = listState.hideDone ? full.filter((s) => { const t = stat(s.code); return !(t.complete || t.improved || t.confirmed); }) : full;
     const list = h('ul', { class: 'rows' });
     if (!pool.length) list.append(h('li', { class: 'empty', text: full.length ? '완료를 제외하면 남은 점포가 없어요.' : '볼 수 있는 점포가 없어요.' }));
     pool.slice(0, listState.shown).forEach((s) => list.append(row(s, key === 'all')));
@@ -702,7 +702,8 @@
     let notice = '';
     const sheetHost = h('div', {});
     const progress = h('p', { class: 'progress' });
-    const upok = h('span', { class: 'upok', hidden: true, role: 'status' }, ckIcon(), '업로드 완료');
+    const upokTx = h('span', { text: '업로드 완료' });
+    const upok = h('span', { class: 'upok', hidden: true, role: 'status' }, ckIcon(), upokTx);
     const okmark = h('span', { class: 'okmark', hidden: true, title: '업로드 완료' }, ckIcon());
     const progrow = h('div', { class: 'progrow' }, progress, upok);
 
@@ -781,7 +782,7 @@
         data.status[code] = n;
         if (DEMO) ls.set('demo-status', JSON.stringify(data.status)); else ls.set('status-cache', JSON.stringify(data.status));
       };
-      setLocal(on); paintImprove(); progCache = null; // 진행율 숫자가 바뀌므로 들고 있던 것을 비운다
+      setLocal(on); paintImprove(); paintTable(); progCache = null; // 진행율 숫자가 바뀌므로 들고 있던 것을 비운다
       const title = on ? `${what}로 표시했어요` : `${what} 표시를 풀었어요`;
       if (DEMO) { snack(title, store.name); return; }
       confirmBox.disabled = true; improveBtn.disabled = true;
@@ -890,7 +891,8 @@
         if (c !== (ok ? 1 : 0)) { const n = mkStatus(data.status[code]); n[8] = c; data.status[code] = n; if (!DEMO) ls.set('status-cache', JSON.stringify(data.status)); else ls.set('demo-status', JSON.stringify(data.status)); }
         ok = !!c;
       }
-      upok.hidden = !ok; okmark.hidden = !ok;
+      const t0 = stat(code), label = ok ? '업로드 완료' : (t0.confirmed ? '확인완료' : (t0.improved ? '개선 완료' : ''));
+      upokTx.textContent = label || '업로드 완료'; upok.hidden = !label; okmark.hidden = !label; okmark.title = label;
       sheetHost.replaceChildren(...[
         notice ? h('p', { class: 'form-note', role: 'alert', text: notice }) : null,
         b.loading ? h('div', { class: 'loadrow', role: 'status', 'aria-live': 'polite' }, spinnerSvg(22, 5), h('span', { text: '올린 사진을 불러오는 중이에요' })) : null,
