@@ -189,7 +189,7 @@
 
   const stat = (code) => {
     const v = data.status[code];
-    return { before: v ? Number(v[0]) || 0 : 0, after: v ? Number(v[1]) || 0 : 0, folder: v && v[3] ? v[3] : '' };
+    return { before: v ? Number(v[0]) || 0 : 0, after: v ? Number(v[1]) || 0 : 0, folder: v && v[3] ? v[3] : '', confirmed: !!(v && v[4]) };
   };
 
   // ---------- 볼 수 있는 점포 ----------
@@ -209,7 +209,7 @@
   }
 
   const listTitle = (key) => ({ mine: '내 담당 점포', all: '전체 점포' })[key] || key;
-  const done = (s) => { const t = stat(s.code); return t.before >= NEED && t.after >= NEED; };
+  const done = (s) => { const t = stat(s.code); return t.confirmed || (t.before >= NEED && t.after >= NEED); }; // 확인완료로 표시한 점포는 사진이 없어도 끝난 것으로 본다
 
   // ---------- 검색 ----------
   const CHO = 'ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ';
@@ -241,7 +241,7 @@
 
   // 아직 안 올린 점포가 위로 오게
   function byProgress(list) {
-    const n = (s) => { const t = stat(s.code); return Math.min(t.before, NEED) + Math.min(t.after, NEED); };
+    const n = (s) => { const t = stat(s.code); return t.confirmed ? 1000 : Math.min(t.before, NEED) + Math.min(t.after, NEED); };
     return [...list].sort((a, b) => n(a) - n(b) || a.name.localeCompare(b.name, 'ko'));
   }
 
@@ -280,6 +280,7 @@
       h('span', { class: 'name', text: s.name }),
       sub ? h('span', { class: 'sub', text: sub }) : null,
       h('span', { class: 'marks' },
+        t.confirmed ? h('i', { class: 'mk on', text: '확인완료' }) : null,
         h('i', { class: t.before >= NEED ? 'mk on' : 'mk', text: `기존 ${t.before}` }),
         h('i', { class: t.after >= NEED ? 'mk on' : 'mk', text: `개선 ${t.after}` }))));
   }
@@ -327,6 +328,9 @@
           names.map((n) => h('a', { class: 'segb', href: `#/list/${enc(n === '전체' ? 'all' : n)}`, 'aria-label': `${n} 매장 목록 보기` },
             n, me.team === n ? h('i', { class: 'own', 'aria-label': '내 팀' }) : null))));
         parts.push(h('p', { class: 'seg-note', text: '팀을 누르면 그 팀의 매장 목록이 나와요 · 점 표시는 내 팀' }));
+        parts.push(h('a', { class: 'cardlink', href: '#/progress' },
+          h('span', { class: 'ct' }, h('b', { text: '팀별 진행율' }), h('small', { text: '미진행 · 개선중 · 개선완료 · 확인완료 매장 수와 비율' })),
+          h('span', { class: 'arr', 'aria-hidden': 'true', text: '›' })));
         const tools = [
           data.links.sheet ? externalLink('취합 시트 열기', data.links.sheet) : null,
           data.links.folder ? externalLink('드라이브 폴더 열기', data.links.folder) : null,
@@ -623,8 +627,8 @@
   // 점포 목록의 완료 표시에 쓰는 장수를 맞춘다
   function recount(code, kind, replaced) {
     const b = book(code);
-    const cur = data.status[code] || [0, 0, '', ''];
-    const next = [cur[0] || 0, cur[1] || 0, new Date().toISOString(), cur[3] || ''];
+    const cur = data.status[code] || [0, 0, '', '', 0];
+    const next = [cur[0] || 0, cur[1] || 0, new Date().toISOString(), cur[3] || '', cur[4] ? 1 : 0];
     if (b.loaded) { next[0] = slotCount(b.before); next[1] = slotCount(b.after); }
     else if (!replaced) next[kind === 'before' ? 0 : 1] += 1;
     data.status[code] = next;
@@ -643,6 +647,34 @@
     let notice = '';
     const sheetHost = h('div', {});
     const progress = h('p', { class: 'progress' });
+
+    // 확인완료: 사진을 올리지 않아도 개선이 끝났거나, 개선할 점이 없는 점포. 체크하면 팀별 진행율에서 미진행으로 세지 않는다.
+    const confirmBox = h('input', { type: 'checkbox', id: 'confirm-chk', checked: stat(code).confirmed,
+      onchange: (e) => toggleConfirm(e.target.checked) });
+    const confirmRow = h('label', { class: 'confirm', for: 'confirm-chk' }, confirmBox,
+      h('span', { class: 'ctext' }, h('b', { text: '확인완료 매장' }), h('small', { text: '사진을 올리지 않아도 개선이 끝났거나, 개선할 점이 없는 매장이에요' })));
+    async function toggleConfirm(on) {
+      const cur = data.status[code] || [0, 0, '', '', 0];
+      const was = !!cur[4];
+      const setLocal = (v) => {
+        const c = data.status[code] || [0, 0, '', '', 0];
+        data.status[code] = [c[0] || 0, c[1] || 0, c[2] || '', c[3] || '', v ? 1 : 0];
+        if (DEMO) ls.set('demo-status', JSON.stringify(data.status)); else ls.set('status-cache', JSON.stringify(data.status));
+      };
+      setLocal(on);
+      if (DEMO) { snack(on ? '확인완료로 표시했어요' : '확인완료 표시를 풀었어요', store.name); return; }
+      confirmBox.disabled = true;
+      try {
+        const r = await postJson({ action: 'confirm', store: code, name: store.name, on });
+        if (!r || !r.ok) throw fail((r && r.error) || 'confirm_failed');
+        snack(on ? '확인완료로 표시했어요' : '확인완료 표시를 풀었어요', store.name);
+      } catch (err) {
+        setLocal(was); confirmBox.checked = was; // 저장하지 못했으면 원래대로 돌려 놓는다
+        notice = err && err.code === 'bad_code' ? '접속 코드가 맞지 않아 저장하지 못했어요. 로그아웃한 뒤 코드를 다시 입력해 주세요.' : '확인완료 표시를 저장하지 못했어요. 잠시 뒤 다시 눌러 주세요.';
+        paintTable();
+      }
+      confirmBox.disabled = false;
+    }
 
     function cell(kind, slot, label) {
       const b = book(code);
@@ -729,7 +761,7 @@
         h('a', { class: 'back', href: nav.back, onclick: () => { if (nav.back === '#/') home.q = ''; } }, nav.back === '#/' ? '‹ 처음' : '‹ 목록'),
         h('h1', { class: 'store-name', text: store.name }),
         h('p', { class: 'sub', text: [store.team, store.sv && `${store.sv} 담당`].filter(Boolean).join(' ') }),
-        progress),
+        progress, confirmRow),
       sheetHost)));
     // 작은 사진이 하나씩 도착할 때마다 표를 통째로 다시 그리지 않도록, 한 화면 프레임에 한 번만 그린다
     let paintQueued = false;
@@ -882,6 +914,51 @@
     paint();
   }
 
+  // ---------- 팀별 진행율 (관리자) ----------
+  // 점포마다 한 가지 상태: 확인완료(체크한 점포) / 미진행(사진이 한 장도 없음) / 개선완료(개선 전 사진이 있는 항목마다 개선 후 사진이 있음) / 개선중(그 밖에 일부 올라옴)
+  const PROG_KINDS = [['none', '미진행'], ['doing', '개선중'], ['done', '개선완료'], ['confirmed', '확인완료']];
+  const PROG_BAR = ['confirmed', 'done', 'doing', 'none']; // 막대에서 칸이 놓이는 순서(왼쪽부터, 진한 색부터)
+  const pctText = (n, t) => `${t ? (Math.round((n / t) * 1000) / 10).toFixed(1) : '0.0'}%`;
+  let progToken = 0;
+  async function renderProgress() {
+    document.title = '팀별 진행율 | 빽다방 홍보물 취합';
+    const token = ++progToken;
+    const back = h('a', { class: 'back', href: '#/', onclick: () => { home.q = ''; } }, '‹ 처음');
+    const shell = (...kids) => { if (token === progToken) view.replaceChildren(h('div', { class: 'wrap' }, back, h('h1', { class: 'page-title', text: '팀별 진행율' }), ...kids)); };
+    if (!isManager()) { shell(h('p', { class: 'empty', text: '팀별 진행율은 관리자 계정에서만 볼 수 있어요.' })); return; }
+    if (DEMO) { shell(h('p', { class: 'empty', text: '시험 모드에서는 볼 수 없어요.' })); return; }
+    shell(loadingBlock('팀별 진행율을 불러오는 중이에요'));
+    let json;
+    try { json = await getJson({ action: 'progress' }); }
+    catch { shell(h('p', { class: 'empty', text: '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
+    if (token !== progToken) return;
+    if (!json.ok) { shell(h('p', { class: 'empty', text: json.error === 'not_allowed' ? '팀별 진행율은 관리자 계정에서만 볼 수 있어요.' : '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
+
+    const card = (title, o, big) => h('section', { class: big ? 'pcard big' : 'pcard', 'aria-label': `${title} 진행율` },
+      h('div', { class: 'phead' }, h('h2', { text: title }), h('span', { class: 'ptotal', text: `전체 ${o.total}곳` })),
+      // 막대는 끝난 것(확인완료·개선완료)이 왼쪽 맨 앞부터 채워지고 남은 것이 오른쪽에 남는다: 진행율이 오르면 막대가 왼쪽에서 차오른다
+      h('div', { class: 'pbar', role: 'img', 'aria-label': PROG_KINDS.map(([k, t]) => `${t} ${o[k]}곳`).join(', ') },
+        PROG_BAR.map((k) => h('i', { class: `s-${k}`, style: `width:${o.total ? (o[k] / o.total) * 100 : 0}%` }))),
+      h('ul', { class: 'plist' }, PROG_KINDS.map(([k, t]) => h('li', {},
+        h('i', { class: `sw s-${k}`, 'aria-hidden': 'true' }),
+        h('span', { class: 'pl', text: t }),
+        h('span', { class: 'pn', text: `${o[k]}곳` }),
+        h('span', { class: 'pp', text: pctText(o[k], o.total) })))));
+
+    shell(
+      h('div', { class: 'pmeta' },
+        h('p', { class: 'meta-line', text: `기준 ${fmtDate(json.at)} · 팀 ${json.teams.length}개 · 전체 ${json.all.total}곳` }),
+        h('button', { type: 'button', class: 'pill', onclick: () => renderProgress() }, '새로고침')),
+      card('전체', json.all, true),
+      h('div', { class: 'pgrid' }, json.teams.map((t) => card(t.team, t))),
+      h('div', { class: 'pdefs' },
+        h('p', { class: 'fine' }, h('b', { text: '미진행 ' }), '사진이 한 장도 올라오지 않은 매장'),
+        h('p', { class: 'fine' }, h('b', { text: '개선중 ' }), '사진은 올라왔지만 개선 후 사진이 아직 없거나, 개선 전 사진이 있는 항목 중 개선 후 사진이 없는 항목이 있는 매장'),
+        h('p', { class: 'fine' }, h('b', { text: '개선완료 ' }), '개선 전 사진이 있고, 개선 전 사진이 있는 항목마다 개선 후 사진이 올라온 매장'),
+        h('p', { class: 'fine' }, h('b', { text: '확인완료 ' }), '매장 화면에서 확인완료로 체크한 매장(사진이 없어도 미진행으로 세지 않아요)'),
+        h('p', { class: 'fine', text: '모든 항목에 사진이 꼭 있어야 하는 것은 아니라서, 올라와 있는 항목끼리만 맞춰 봐요.' })));
+  }
+
   // ---------- 라우터 ----------
   function render() {
     if (!me) return; // 로그인 전에는 로그인 화면만 보인다
@@ -889,6 +966,7 @@
     let m = hash.match(/^#\/store\/(.+)$/);
     if (m) { renderStore(decodeURIComponent(m[1])); window.scrollTo(0, 0); return; }
     storeView = null;
+    if (hash === '#/progress') { renderProgress(); window.scrollTo(0, 0); return; }
     if (hash === '#/log') { renderLog(); window.scrollTo(0, 0); return; }
     m = hash.match(/^#\/list\/(.+)$/);
     if (m) { nav.back = hash; renderList(decodeURIComponent(m[1])); } else { nav.back = '#/'; renderHome(); }
