@@ -989,11 +989,13 @@
       const text = norm(q);
       const rows = json.rows.filter((e) => (filter === '전체' || (filter === '사진' ? isPhotoAct(e) : !isPhotoAct(e)))
         && (!text || norm(e[2]).includes(text) || norm(e[5]).includes(text) || norm(what(e)[2]).includes(text)));
-      listHost.replaceChildren(
+      // 더 보기 버튼이 없을 때의 빈 값(null)을 그대로 넘기면 화면에 "null" 글자가 찍히므로 걸러서 넘긴다
+      listHost.replaceChildren(...[
         h('p', { class: 'meta-line', text: `${rows.length}건` }),
         h('div', { class: 'uphead', 'aria-hidden': 'true' }, ['시각', '점포', '한 일', '누른 사람'].map((t) => h('span', { text: t }))),
         h('ul', { class: 'uplist' }, rows.length ? rows.slice(0, shown).map(actRow) : h('li', { class: 'empty', text: '기록이 없어요.' })),
-        rows.length > shown ? h('button', { type: 'button', class: 'btn ghost block more', onclick: () => { shown += 50; paintList(); } }, `더 보기 (${rows.length - shown}건 남음)`) : null);
+        rows.length > shown ? h('button', { type: 'button', class: 'btn ghost block more', onclick: () => { shown += 50; paintList(); } }, `더 보기 (${rows.length - shown}건 남음)`) : null,
+      ].filter(Boolean));
     }
     input.addEventListener('input', () => { q = input.value.trim(); shown = 50; paintList(); });
     const segs = h('div', { class: 'segs inline', role: 'group', 'aria-label': '종류', style: '--n:3' },
