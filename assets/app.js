@@ -396,7 +396,10 @@
     const cur = key === 'all' ? '전체' : key;
     view.replaceChildren(h('div', { class: 'wrap' },
       h('a', { class: 'back', href: '#/', onclick: () => { home.q = ''; } }, '‹ 처음'),
-      h('h1', { class: 'page-title', text: listTitle(key) }),
+      // 관리자는 제목 오른쪽에서 이 팀의 미진행 매장(사진이 한 장도 없는 매장)만 바로 모아 볼 수 있다
+      h('div', { class: 'titlerow' },
+        h('h1', { class: 'page-title', text: listTitle(key) }),
+        isManager() && key !== 'mine' ? h('a', { class: 'pill', id: 'none-link', href: progHref(key, 'none') }, '미진행 매장 보기', h('span', { 'aria-hidden': 'true', text: '›' })) : null),
       h('p', { class: 'meta-line', text: `${pool.length}곳 중 ${left}곳을 아직 못 올렸어요` }),
       h('div', { class: 'meter', 'aria-hidden': 'true' }, h('i', { style: `width:${pct}%` })),
       names.length ? h('div', { class: 'segs left', role: 'group', 'aria-label': '팀 바꾸기', style: `--n:${names.length}` },
@@ -652,7 +655,7 @@
     const confirmBox = h('input', { type: 'checkbox', id: 'confirm-chk', checked: stat(code).confirmed,
       onchange: (e) => toggleConfirm(e.target.checked) });
     const confirmRow = h('label', { class: 'confirm', for: 'confirm-chk' }, confirmBox,
-      h('span', { class: 'ctext' }, h('b', { text: '확인완료 매장' }), h('small', { text: '사진을 올리지 않아도 개선이 끝났거나, 개선할 점이 없는 매장이에요' })));
+      h('span', { class: 'ctext' }, h('b', { text: '확인완료 매장' }), h('small', { text: '개선이 끝났거나, 개선할 점이 없는 매장이에요. 개선 전 사진은 필수로 업로드해야 해요.' })));
     // 확인완료(체크)와 "개선 완료"(버튼)는 같은 방식으로 저장한다. 현황 칸: [.., 확인완료(4), 개선완료 직접 누름(5)]
     async function setFlag(kind, on, revertUi) {
       const idx = kind === 'done' ? 5 : 4, what = kind === 'done' ? '개선 완료' : '확인완료';
@@ -664,7 +667,7 @@
         data.status[code] = n;
         if (DEMO) ls.set('demo-status', JSON.stringify(data.status)); else ls.set('status-cache', JSON.stringify(data.status));
       };
-      setLocal(on); paintImprove();
+      setLocal(on); paintImprove(); progCache = null; // 진행율 숫자가 바뀌므로 들고 있던 것을 비운다
       const title = on ? `${what}로 표시했어요` : `${what} 표시를 풀었어요`;
       if (DEMO) { snack(title, store.name); return; }
       confirmBox.disabled = true; improveBtn.disabled = true;
@@ -937,6 +940,16 @@
   const PROG_BAR = ['confirmed', 'done', 'doing', 'none']; // 막대에서 칸이 놓이는 순서(왼쪽부터, 진한 색부터)
   const pctText = (n, t) => `${t ? (Math.round((n / t) * 1000) / 10).toFixed(1) : '0.0'}%`;
   let progToken = 0;
+  // 진행율 응답은 잠깐(30초) 들고 있다가 항목을 눌러 매장 목록을 볼 때 다시 쓴다. 체크·버튼을 누르면 비운다.
+  let progCache = null;
+  async function loadProgress(fresh) {
+    if (!fresh && progCache && Date.now() - progCache.at < 30000) return progCache.json;
+    const json = await getJson({ action: 'progress' });
+    if (json && json.ok) progCache = { json, at: Date.now() };
+    return json;
+  }
+  const progHref = (team, kind) => `#/progress/${enc(team)}/${kind}`;
+
   async function renderProgress() {
     document.title = '팀별 진행율 | 빽다방 홍보물 취합';
     const token = ++progToken;
@@ -946,7 +959,7 @@
     if (DEMO) { shell(h('p', { class: 'empty', text: '시험 모드에서는 볼 수 없어요.' })); return; }
     shell(loadingBlock('팀별 진행율을 불러오는 중이에요'));
     let json;
-    try { json = await getJson({ action: 'progress' }); }
+    try { json = await loadProgress(true); }
     catch { shell(h('p', { class: 'empty', text: '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
     if (token !== progToken) return;
     if (!json.ok) { shell(h('p', { class: 'empty', text: json.error === 'not_allowed' ? '팀별 진행율은 관리자 계정에서만 볼 수 있어요.' : '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
@@ -956,11 +969,14 @@
       // 막대는 끝난 것(확인완료·개선완료)이 왼쪽 맨 앞부터 채워지고 남은 것이 오른쪽에 남는다: 진행율이 오르면 막대가 왼쪽에서 차오른다
       h('div', { class: 'pbar', role: 'img', 'aria-label': PROG_KINDS.map(([k, t]) => `${t} ${o[k]}곳`).join(', ') },
         PROG_BAR.map((k) => h('i', { class: `s-${k}`, style: `width:${o.total ? (o[k] / o.total) * 100 : 0}%` }))),
+      // 항목을 누르면 그 팀의 그 상태인 매장 목록이 나온다
       h('ul', { class: 'plist' }, PROG_KINDS.map(([k, t]) => h('li', {},
-        h('i', { class: `sw s-${k}`, 'aria-hidden': 'true' }),
-        h('span', { class: 'pl', text: t }),
-        h('span', { class: 'pn', text: `${o[k]}곳` }),
-        h('span', { class: 'pp', text: pctText(o[k], o.total) })))));
+        h('a', { class: 'plink', href: progHref(big ? 'all' : title, k), 'aria-label': `${title} ${t} ${o[k]}곳, 매장 목록 보기` },
+          h('i', { class: `sw s-${k}`, 'aria-hidden': 'true' }),
+          h('span', { class: 'pl', text: t }),
+          h('span', { class: 'pn', text: `${o[k]}곳` }),
+          h('span', { class: 'pp', text: pctText(o[k], o.total) }),
+          h('span', { class: 'go', 'aria-hidden': 'true', text: '›' }))))));
 
     shell(
       h('div', { class: 'pmeta' },
@@ -973,7 +989,50 @@
         h('p', { class: 'fine' }, h('b', { text: '개선중 ' }), '사진은 올라왔지만 개선 후 사진이 아직 없거나, 개선 전 사진이 있는 항목 중 개선 후 사진이 없는 항목이 있는 매장'),
         h('p', { class: 'fine' }, h('b', { text: '개선완료 ' }), '개선 전 사진이 있고, 개선 전 사진이 있는 항목마다 개선 후 사진이 올라온 매장'),
         h('p', { class: 'fine' }, h('b', { text: '확인완료 ' }), '매장 화면에서 확인완료로 체크한 매장(사진이 없어도 미진행으로 세지 않아요)'),
-        h('p', { class: 'fine', text: '모든 항목에 사진이 꼭 있어야 하는 것은 아니라서, 올라와 있는 항목끼리만 맞춰 봐요.' })));
+        h('p', { class: 'fine', text: '모든 항목에 사진이 꼭 있어야 하는 것은 아니라서, 올라와 있는 항목끼리만 맞춰 봐요.' }),
+        h('p', { class: 'fine', text: '각 항목을 누르면 그 팀의 해당 매장 목록을 볼 수 있어요.' })));
+  }
+
+  // ---------- 진행율 항목을 눌렀을 때: 그 팀의 해당 상태 매장 목록 ----------
+  const progList = { key: '', shown: PAGE };
+  async function renderProgressList(teamKey, kind) {
+    const token = ++progToken;
+    const kindName = Object.fromEntries(PROG_KINDS)[kind];
+    const teamName = teamKey === 'all' ? '전체' : teamKey;
+    document.title = `${teamName} ${kindName} | 빽다방 홍보물 취합`;
+    nav.back = progHref(teamKey, kind); // 매장을 열었다가 돌아오면 이 목록으로
+    const back = h('a', { class: 'back', href: '#/progress' }, '‹ 진행율');
+    const shell = (...kids) => { if (token === progToken) view.replaceChildren(h('div', { class: 'wrap' }, back, h('h1', { class: 'page-title', text: `${teamName} · ${kindName}` }), ...kids)); };
+    if (!isManager()) { shell(h('p', { class: 'empty', text: '팀별 진행율은 관리자 계정에서만 볼 수 있어요.' })); return; }
+    if (DEMO) { shell(h('p', { class: 'empty', text: '시험 모드에서는 볼 수 없어요.' })); return; }
+    if (!PROG_KINDS.some(([k]) => k === kind)) { shell(h('p', { class: 'empty', text: '없는 항목이에요.' })); return; }
+    shell(loadingBlock('매장 목록을 불러오는 중이에요'));
+    let json;
+    try { json = await loadProgress(false); }
+    catch { shell(h('p', { class: 'empty', text: '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
+    if (token !== progToken) return;
+    if (!json.ok || !json.kinds) { shell(h('p', { class: 'empty', text: '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
+
+    const inTeam = data.stores.filter((s) => teamKey === 'all' || (s.team || '팀 미지정') === teamKey);
+    const kindOf = (s) => json.kinds[s.code] || 'none';
+    const counts = Object.fromEntries(PROG_KINDS.map(([k]) => [k, 0]));
+    inTeam.forEach((s) => { counts[kindOf(s)] += 1; });
+    const pool = inTeam.filter((s) => kindOf(s) === kind).sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true }));
+    const key = `${teamKey}|${kind}`;
+    if (progList.key !== key) { progList.key = key; progList.shown = PAGE; }
+
+    const list = h('ul', { class: 'rows' });
+    if (!pool.length) list.append(h('li', { class: 'empty', text: `${kindName} 매장이 없어요.` }));
+    pool.slice(0, progList.shown).forEach((s) => list.append(row(s, teamKey === 'all')));
+    const more = pool.length > progList.shown
+      ? h('button', { type: 'button', class: 'btn ghost block more', onclick: () => { progList.shown += PAGE; renderProgressList(teamKey, kind); } }, `더 보기 (${pool.length - progList.shown}곳 남음)`)
+      : null;
+    // 같은 팀의 다른 상태로 바로 넘어가는 세그먼트
+    const segs = h('div', { class: 'segs left', role: 'group', 'aria-label': '상태 바꾸기', style: `--n:${PROG_KINDS.length}` },
+      PROG_KINDS.map(([k, t]) => h('a', { class: k === kind ? 'segb on' : 'segb', href: progHref(teamKey, k), 'aria-current': k === kind ? 'page' : false }, `${t} ${counts[k]}`)));
+    shell(
+      h('p', { class: 'meta-line', text: `${teamName} ${inTeam.length}곳 중 ${kindName} ${pool.length}곳 (${pctText(pool.length, inTeam.length)})` }),
+      segs, list, more);
   }
 
   // ---------- 라우터 ----------
@@ -984,6 +1043,8 @@
     if (m) { renderStore(decodeURIComponent(m[1])); window.scrollTo(0, 0); return; }
     storeView = null;
     if (hash === '#/progress') { renderProgress(); window.scrollTo(0, 0); return; }
+    m = hash.match(/^#\/progress\/([^/]+)\/([a-z]+)$/);
+    if (m) { renderProgressList(decodeURIComponent(m[1]), m[2]); window.scrollTo(0, 0); return; }
     if (hash === '#/log') { renderLog(); window.scrollTo(0, 0); return; }
     m = hash.match(/^#\/list\/(.+)$/);
     if (m) { nav.back = hash; renderList(decodeURIComponent(m[1])); } else { nav.back = '#/'; renderHome(); }

@@ -119,6 +119,11 @@ main { outline: none; padding-bottom: calc(40px + env(safe-area-inset-bottom, 0p
 /* 팀 목록 화면 */
 .page-title { margin: 6px 0 4px; font-size: clamp(28px, 7.6vw, 38px); line-height: 1.2; letter-spacing: -0.035em; font-weight: 800; }
 .page-title + .meta-line { margin-top: 0; }
+/* 팀 목록 제목 줄: 제목은 왼쪽, "미진행 매장 보기"는 오른쪽(좁으면 줄을 바꿈) */
+.titlerow { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; }
+.titlerow .page-title { margin-right: auto; }
+.titlerow + .meta-line { margin-top: 0; }
+.titlerow .pill { min-height: 42px; padding: 0 18px; font-size: 14px; }
 
 /* 올린 사진 */
 .gallery { margin-top: 30px; }
@@ -401,8 +406,13 @@ main:has(.dock:not([hidden])) { padding-bottom: calc(110px + env(safe-area-inset
 .s-done { background: #4a4a4a; }
 .s-confirmed { background: #000; }
 .plist { list-style: none; margin: 10px 0 0; padding: 0; }
-.plist li { display: grid; grid-template-columns: 14px 1fr auto 64px; align-items: center; gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 15px; }
+.plist li { border-top: 1px solid var(--line); font-size: 15px; }
 .plist li:first-child { border-top: 0; }
+.plist .plink { display: grid; grid-template-columns: 14px 1fr auto 64px 12px; align-items: center; gap: 10px; padding: 10px 0; border-radius: 10px;
+  transition: opacity var(--press) var(--ease-out); -webkit-tap-highlight-color: transparent; }
+.plist .plink:active { opacity: 0.55; }
+.plist .plink:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.plist .go { font-size: 20px; line-height: 1; font-weight: 700; color: #9a9a9a; text-align: right; }
 .plist .sw { width: 12px; height: 12px; border-radius: 4px; }
 .plist .s-none.sw { box-shadow: inset 0 0 0 1.5px #bdbdbd; background: #fff; }
 .plist .pl { font-weight: 700; }
