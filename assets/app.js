@@ -23,7 +23,7 @@
   ];
   const SLOT_TOTAL = SECTIONS.reduce((n, s) => n + s.items.length, 0); // 9
   // 완료 표시의 체크: 선이 그려지듯 나타난다(CSS .ck). 움직임을 줄인 설정이면 바로 보인다.
-  const CK_SVG = '<svg class="ck" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3.2 8.6l3.1 3.1 6.5-6.7" pathLength="1"/></svg>';
+  const CK_SVG = '<svg class="ckd" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3.2 8.6l3.1 3.1 6.5-6.7" pathLength="1"/></svg>';
   const ckIcon = () => h('span', { class: 'ckw', 'aria-hidden': 'true', html: CK_SVG });
   const ALL_SLOTS = SECTIONS.flatMap((sec) => sec.items.map((it) => it[0]));
   const NEED = SLOT_TOTAL - 1; // 후면은 해당하는 매장만 올리므로, 나머지 8곳이 다 차면 완료
@@ -205,6 +205,11 @@
     return ALL_SLOTS.every((sl) => (sl === 'back' && backNa) || (b.before.some((e) => e.slot === sl) && b.after.some((e) => e.slot === sl))) ? 1 : 0;
   }
 
+  // 관리자 코멘트를 읽었는지(이 기기에서): 점포별로 마지막에 본 코멘트 수를 기억한다. 그보다 늘어나 있으면 SV 화면에 "새 코멘트"로 알려 준다.
+  const seenCm = () => { try { return JSON.parse(ls.get('cm-seen', '{}')) || {}; } catch { return {}; } };
+  const markCmSeen = (code, n) => { const m = seenCm(); if ((m[code] || 0) === n) return; m[code] = n; ls.set('cm-seen', JSON.stringify(m)); };
+  const hasNewCm = (code) => !!me && me.role !== '관리자' && stat(code).comments > (seenCm()[code] || 0);
+
   // ---------- 볼 수 있는 점포 ----------
   // 직원: 본인 담당 점포만. 관리자: 모든 팀(팀 칸에서 골라 들어간다).
   const isManager = () => !!me && me.role === '관리자';
@@ -293,7 +298,7 @@
       h('span', { class: 'name' }, s.name, (t.complete || t.improved || t.confirmed) ? h('span', { class: 'okmark', title: t.confirmed ? '확인완료' : (t.improved ? '개선 완료' : '업로드 완료') }, ckIcon()) : null),
       sub ? h('span', { class: 'sub', text: sub }) : null,
       h('span', { class: 'marks' },
-        t.comments ? h('i', { class: 'mk cm', text: `코멘트 ${t.comments}` }) : null,
+        t.comments ? h('i', { class: hasNewCm(s.code) ? 'mk cm new' : 'mk cm', text: hasNewCm(s.code) ? `새 코멘트 ${t.comments}` : `코멘트 ${t.comments}` }) : null,
         t.complete ? h('i', { class: 'mk up' }, ckIcon(), '업로드 완료') : null,
         t.confirmed ? h('i', { class: 'mk on' }, ckIcon(), '확인완료') : (t.improved ? h('i', { class: 'mk on' }, ckIcon(), '개선완료') : null),
         h('i', { class: t.before >= NEED ? 'mk on' : 'mk', text: `기존 ${t.before}` }),
@@ -323,8 +328,98 @@
     snackTimer = setTimeout(close, 3400);
   }
 
+  // ---------- 사용 방법: 말풍선(툴팁) 안내 ----------
+  // 처음 쓰는 SV에게는 홈과 점포 화면에서 한 번씩 저절로 시작하고, 이후에는 "사용 방법" 버튼으로 다시 볼 수 있다.
+  const HOME_STEPS = [
+    { sel: '.hero .search', title: '점포 찾기', text: '점포명이나 담당자 이름으로 바로 찾을 수 있어요.' },
+    { sel: '.mysum', title: '내 진행 현황', text: '완료한 점포 수와 남은 점포가 보여요. 아래 버튼을 누르면 이어서 올릴 점포로 가요.' },
+    { sel: '.segs .segb', title: '내 담당 점포', text: '담당 점포 목록은 여기서 열어요. 다 끝낸 점포는 목록 맨 아래로 내려가요.' },
+  ];
+  const STORE_STEPS = [
+    { sel: '.progrow', title: '진행 상황', text: '기존 사진과 개선 사진이 몇 칸 채워졌는지 보여요. 9칸이 다 차면 "업로드 완료" 체크가 붙어요.' },
+    { sel: '.cell.blank', title: '사진 올리기', text: '빈 칸을 눌러 사진을 올려요. 항목마다 기존 사진과 개선 사진을 한 장씩 올리고, 같은 칸에 다시 올리면 바뀌어요.' },
+    { sel: '.cell .del', title: '잘못 올렸을 때', text: '사진 오른쪽 위의 ×로 지울 수 있어요. 지운 사진은 드라이브 휴지통에 남아요.' },
+    { sel: '.backna', title: '후면이 없는 매장', text: '후면 사진이 없는 매장이면 "후면 미해당"을 체크하세요. 후면은 올린 것으로 쳐요.' },
+    { sel: '.emptybar', title: '빈 칸 찾기', text: '"빈 칸만 보기"나 "다음 빈 칸"으로 아직 안 올린 칸을 빨리 찾을 수 있어요.' },
+    { sel: '.confirm', title: '확인완료', text: '사진 없이 개선할 점이 없는 매장이면 체크하세요. 개선 전 사진은 꼭 올려야 해요.' },
+    { sel: '#improve-btn', title: '개선 완료', text: '몇 곳만 개선하는 매장이면, 개선이 끝났을 때 이 버튼을 눌러 주세요.' },
+  ];
+  let tour = null;
+  function endTour(done) {
+    if (!tour) return;
+    if (done && tour.id) ls.set('tour-' + tour.id, '1');
+    tour.layer.remove();
+    window.removeEventListener('resize', tour.place); window.removeEventListener('scroll', tour.place, true); document.removeEventListener('keydown', tour.key);
+    tour = null;
+  }
+  function startTour(id, steps) {
+    endTour(false);
+    const list = steps.filter((st) => document.querySelector(st.sel));
+    if (!list.length) return;
+    const hole = h('div', { class: 'tourhole' }), tip = h('div', { class: 'tourtip', role: 'dialog', 'aria-label': '사용 방법 안내', 'aria-live': 'polite' });
+    const layer = h('div', { class: 'tourlayer' }, h('div', { class: 'tourshield' }), hole, tip);
+    document.body.append(layer);
+    let i = 0;
+    function place() {
+      const el = document.querySelector(list[i].sel);
+      if (!el) return;
+      const r = el.getBoundingClientRect(), pad = 6;
+      hole.style.left = `${r.left - pad}px`; hole.style.top = `${r.top - pad}px`; hole.style.width = `${r.width + pad * 2}px`; hole.style.height = `${r.height + pad * 2}px`;
+      const th = tip.offsetHeight, tw = tip.offsetWidth, vw = window.innerWidth, vh = window.innerHeight;
+      const below = r.bottom + pad + 12 + th < vh - 8;
+      tip.style.top = `${below ? r.bottom + pad + 12 : Math.max(8, r.top - pad - 12 - th)}px`;
+      tip.style.left = `${Math.min(Math.max(12, r.left), Math.max(12, vw - tw - 12))}px`;
+    }
+    function next() { if (i >= list.length - 1) { endTour(true); return; } i += 1; show(); }
+    function show() {
+      const st = list[i], el = document.querySelector(st.sel);
+      if (!el) { next(); return; }
+      el.scrollIntoView({ block: 'center' });
+      tip.replaceChildren(h('b', { class: 'tourtitle', text: st.title }), h('p', { class: 'tourtext', text: st.text }),
+        h('div', { class: 'tourfoot' }, h('span', { class: 'tourcount', text: `${i + 1}/${list.length}` }),
+          h('button', { type: 'button', class: 'tourskip', onclick: () => endTour(true) }, '건너뛰기'),
+          h('button', { type: 'button', class: 'tournext', onclick: next }, i === list.length - 1 ? '끝' : '다음 ›')));
+      requestAnimationFrame(() => requestAnimationFrame(place));
+    }
+    const key = (e) => { if (e.key === 'Escape') endTour(true); };
+    tour = { id, layer, place, key };
+    window.addEventListener('resize', place); window.addEventListener('scroll', place, true); document.addEventListener('keydown', key);
+    show();
+  }
+  // 처음 쓰는 SV에게만 저절로 시작한다(이 기기에서 한 번)
+  function autoTour(id, steps, hashTest, delay) {
+    if (window.__noTour || !me || me.role === '관리자' || ls.get('tour-' + id)) return;
+    setTimeout(() => { if (!tour && hashTest(location.hash)) startTour(id, steps); }, delay);
+  }
+
   // ---------- 홈: 검색창과 팀 칸만 ----------
   const home = { q: '' };
+
+  // SV 홈: 내 진행 현황(완료 점포 수·남은 점포·이어서 올리기)과 아직 안 읽은 관리자 코멘트
+  function mySummary() {
+    const list = mine();
+    if (!list.length) return [];
+    const fin = (st) => { const t = stat(st.code); return t.complete || t.improved || t.confirmed; };
+    const left = list.filter((st) => !fin(st));
+    const pct = Math.round(((list.length - left.length) / list.length) * 100);
+    const prog = (st) => { const t = stat(st.code); return Math.min(t.before, NEED) + Math.min(t.after, NEED); };
+    const lastCode = ls.get('last-store');
+    const lastS = left.find((st) => st.code === lastCode);
+    const next = lastS || [...left].sort((a, b) => prog(b) - prog(a) || a.name.localeCompare(b.name, 'ko'))[0];
+    const fresh = list.filter((st) => hasNewCm(st.code));
+    const out = [h('section', { class: 'mysum', 'aria-label': '내 진행 현황' },
+      h('div', { class: 'mshead' }, h('b', { text: `내 담당 ${list.length}곳 중 ${list.length - left.length}곳 완료` }), h('span', { class: 'mspct', text: `${pct}%` })),
+      h('div', { class: 'meter', 'aria-hidden': 'true' }, h('i', { style: `width:${pct}%` })),
+      h('p', { class: 'msnote', text: left.length ? `남은 점포 ${left.length}곳` : '모든 점포를 마쳤어요' }),
+      next ? h('a', { class: 'btn primary block msnext', href: `#/store/${enc(next.code)}` }, lastS ? `이어서 올리기 · ${next.name}` : `다음 점포 올리기 · ${next.name}`) : null)];
+    if (fresh.length) {
+      out.push(h('section', { class: 'newcm', 'aria-label': '새 관리자 코멘트' },
+        h('b', { text: `관리자 코멘트 ${fresh.length}곳, 확인해 주세요` }),
+        h('ul', {}, fresh.slice(0, 5).map((st) => h('li', {}, h('a', { href: `#/store/${enc(st.code)}` }, st.name, h('span', { 'aria-hidden': 'true', text: ' ›' }))))),
+        fresh.length > 5 ? h('small', { text: `외 ${fresh.length - 5}곳은 목록의 "새 코멘트" 표시를 확인해 주세요` }) : null));
+    }
+    return out;
+  }
 
   function renderHome() {
     document.title = '빽다방 홍보물 취합';
@@ -356,9 +451,11 @@
         ].filter(Boolean);
         if (tools.length) parts.push(h('div', { class: 'admin-tools' }, tools));
       } else {
+        parts.push(...mySummary());
         parts.push(h('div', { class: 'segs', role: 'group', 'aria-label': '팀 선택', style: '--n:1' },
           h('a', { class: 'segb', href: '#/list/mine', 'aria-label': '내 담당 점포 목록 보기' }, '내 담당 점포')));
         parts.push(h('p', { class: 'seg-note', text: '내 담당 점포를 확인하고 사진을 올려요' }));
+        parts.push(h('button', { type: 'button', class: 'pill tourbtn', id: 'tour-home', onclick: () => startTour('home', HOME_STEPS) }, '사용 방법 보기'));
       }
       cardsHost.replaceChildren(...parts);
     }
@@ -391,6 +488,7 @@
       cardsHost, resultsHost));
     paintCards();
     paintResults();
+    autoTour('home', HOME_STEPS, (hs) => hs === '#/' || hs === '' || hs === '#', 700);
   }
 
   // ---------- 팀 목록 ----------
@@ -697,9 +795,11 @@
     const store = data.byCode.get(code);
     if (!store) { view.replaceChildren(h('div', { class: 'wrap' }, h('p', { class: 'empty', text: '없는 점포예요.' }), h('a', { class: 'btn block', href: '#/', text: '처음으로' }))); return; }
     document.title = `${store.name} | 빽다방 홍보물 취합`;
+    ls.set('last-store', code);
 
     const working = new Map(); // "before:front" -> { state: 'up' | 'error', file, url }  올리는 중이거나 실패한 칸
     let notice = '';
+    let onlyEmpty = false; // 빈 칸만 보기
     const sheetHost = h('div', {});
     const progress = h('p', { class: 'progress' });
     const upokTx = h('span', { text: '업로드 완료' });
@@ -720,6 +820,7 @@
       const c = mkStatus(data.status[code]);
       c[6] = n;
       data.status[code] = c;
+      markCmSeen(code, n);
       if (!DEMO) ls.set('status-cache', JSON.stringify(data.status));
     };
     function paintComments() {
@@ -876,7 +977,50 @@
         st && st.state === 'up' ? h('div', { class: 'spin-over', role: 'status' }, spinnerSvg(30, 5)) : null,
         st && st.state !== 'error' ? h('span', { class: 'st', text: st.state === 'wait' ? '대기 중' : '올리는 중' }) : null,
         st && st.state === 'error' ? h('button', { type: 'button', class: 'st retry', onclick: () => send(kind, slot, st.file), text: '실패, 다시 시도' }) : null,
-        !st ? h('label', { class: 'swap' }, pick, '바꾸기') : null);
+        !st ? h('label', { class: 'swap' }, pick, '바꾸기') : null,
+        !st ? h('button', { type: 'button', class: 'del', 'aria-label': `${label} ${col} 사진 지우기`, onclick: (ev) => { ev.stopPropagation(); deletePhoto(kind, slot, label, entry); } }, '×') : null);
+    }
+
+    // 사진 지우기: 담당자·관리자가 할 수 있고, 지운 사진은 드라이브 휴지통으로 간다. 업로드 완료·진행율도 바로 바뀐다.
+    async function deletePhoto(kind, slot, label, entry) {
+      if (!window.confirm(`${label} ${COL[kind]}을 지울까요?\n지운 사진은 드라이브 휴지통으로 가요.`)) return;
+      const b = book(code), was = b[kind];
+      b[kind] = was.filter((e) => e.slot !== slot); notice = '';
+      if (entry && entry.id) thumbDB.del(entry.id);
+      const setStat = () => {
+        const n = mkStatus(data.status[code]), bk = book(code), i = kind === 'before' ? 0 : 1;
+        if (bk.loaded) { n[0] = slotCount(bk.before); n[1] = slotCount(bk.after); } else n[i] = Math.max(0, n[i] - 1);
+        n[8] = bk.loaded ? completeOf(code, n[7], 0) : 0;
+        data.status[code] = n;
+        ls.set(DEMO ? 'demo-status' : 'status-cache', JSON.stringify(data.status));
+      };
+      setStat(); progCache = null; paintTable();
+      if (DEMO) {
+        const all = localJson('demo-photos');
+        if (all[store.code]) { all[store.code][kind] = (all[store.code][kind] || []).filter((e) => e.slot !== slot); ls.set('demo-photos', JSON.stringify(all)); }
+        snack(`${label} ${COL[kind]}을 지웠어요`, store.name);
+        return;
+      }
+      try {
+        const r = await postJson({ action: 'delete_photo', store: code, name: store.name, kind, slot });
+        if (!r || !r.ok) throw fail((r && r.error) || 'delete_failed');
+        snack(`${label} ${COL[kind]}을 지웠어요`, store.name);
+      } catch (err) {
+        if (err && err.code === 'no_photo') { snack(`${label} ${COL[kind]}을 지웠어요`, store.name); return; } // 서버에는 이미 없었다
+        b[kind] = was; setStat(); // 지우지 못했으면 원래대로
+        notice = err && err.code === 'bad_code' ? '접속 코드가 맞지 않아 지우지 못했어요. 로그아웃한 뒤 코드를 다시 입력해 주세요.' : '사진을 지우지 못했어요. 잠시 뒤 다시 눌러 주세요.';
+        paintTable();
+      }
+    }
+
+    // 다음 빈 칸으로: 화면 가운데보다 아래에 있는 첫 빈 칸으로 내려가고, 끝이면 맨 처음 빈 칸으로 돌아간다
+    function goNextEmpty() {
+      const cells = [...sheetHost.querySelectorAll('.cell.blank')];
+      if (!cells.length) return;
+      const mid = window.innerHeight * 0.55;
+      const c = cells.find((el) => el.getBoundingClientRect().top > mid) || cells[0];
+      c.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      c.classList.remove('flash'); void c.offsetWidth; c.classList.add('flash');
     }
 
     function paintTable() {
@@ -893,15 +1037,24 @@
       }
       const t0 = stat(code), label = ok ? '업로드 완료' : (t0.confirmed ? '확인완료' : (t0.improved ? '개선 완료' : ''));
       upokTx.textContent = label || '업로드 완료'; upok.hidden = !label; okmark.hidden = !label; okmark.title = label;
+      const isEmpty = (kind, slot) => !(slot === 'back' && t0.backNa) && !b[kind].some((e) => e.slot === slot) && !working.has(`${kind}:${slot}`);
+      const emptyTotal = b.loaded ? ALL_SLOTS.reduce((n, sl) => n + (isEmpty('before', sl) ? 1 : 0) + (isEmpty('after', sl) ? 1 : 0), 0) : 0;
+      if (!emptyTotal) onlyEmpty = false;
+      const failedList = [...working.entries()].filter(([, v]) => v.state === 'error');
       sheetHost.replaceChildren(...[
         notice ? h('p', { class: 'form-note', role: 'alert', text: notice }) : null,
+        failedList.length ? h('div', { class: 'retrybar', role: 'alert' }, h('span', { text: `올리지 못한 사진 ${failedList.length}장` }),
+          h('button', { type: 'button', class: 'pill dark', id: 'retry-all', onclick: () => failedList.forEach(([k, v]) => { const [kd, sl] = k.split(':'); send(kd, sl, v.file); }) }, '모두 다시 올리기')) : null,
+        emptyTotal ? h('div', { class: 'emptybar' }, h('span', { class: 'ebn', text: `빈 칸 ${emptyTotal}개` }),
+          h('button', { type: 'button', class: onlyEmpty ? 'pill dark' : 'pill', id: 'only-empty', 'aria-pressed': String(onlyEmpty), onclick: () => { onlyEmpty = !onlyEmpty; paintTable(); } }, onlyEmpty ? '✓ 빈 칸만 보는 중' : '빈 칸만 보기'),
+          h('button', { type: 'button', class: 'pill', id: 'next-empty', onclick: goNextEmpty }, '다음 빈 칸 ›')) : null,
         b.loading ? h('div', { class: 'loadrow', role: 'status', 'aria-live': 'polite' }, spinnerSvg(22, 5), h('span', { text: '올린 사진을 불러오는 중이에요' })) : null,
         b.failed ? h('p', { class: 'hint', text: '올린 사진을 불러오지 못했어요. 새로 올리는 것은 그대로 됩니다.' }) : null,
         h('div', { class: 'sheet' },
           h('div', { class: 'sheet-cols', 'aria-hidden': 'true' }, h('span', { text: '항목' }), h('span', { text: COL.before }), h('span', { text: COL.after })),
-          SECTIONS.map((sec) => h('section', { class: 'grp', 'aria-label': sec.title },
+          SECTIONS.map((sec) => ({ sec, items: sec.items.filter(([slot]) => !onlyEmpty || isEmpty('before', slot) || isEmpty('after', slot)) })).filter((x) => x.items.length).map(({ sec, items }) => h('section', { class: 'grp', 'aria-label': sec.title },
             h('h2', { text: sec.title }),
-            sec.items.map(([slot, label, desc]) => {
+            items.map(([slot, label, desc]) => {
               const isNa = slot === 'back' && stat(code).backNa;
               return h('div', { class: isNa ? 'srow na' : 'srow' },
                 h('div', { class: 'lbl' }, h('b', { text: label }), desc ? h('small', { text: desc }) : null, slot === 'back' ? backNaBox() : null),
@@ -945,6 +1098,7 @@
         h('a', { class: 'back', href: nav.back, onclick: () => { if (nav.back === '#/') home.q = ''; } }, nav.back === '#/' ? '‹ 처음' : '‹ 목록'),
         h('h1', { class: 'store-name' }, store.name, okmark),
         h('p', { class: 'sub', text: [store.team, store.sv && `${store.sv} 담당`].filter(Boolean).join(' ') }),
+        h('button', { type: 'button', class: 'pill tourbtn', id: 'tour-store', onclick: () => startTour('store', STORE_STEPS) }, '사용 방법'),
         progrow, confirmRow, improveBtn, commentsHost),
       sheetHost)));
     // 작은 사진이 하나씩 도착할 때마다 표를 통째로 다시 그리지 않도록, 한 화면 프레임에 한 번만 그린다
@@ -956,6 +1110,7 @@
     };
     storeView = { code, paintTable: paintSoon };
     paintTable();
+    autoTour('store', STORE_STEPS, (hs) => hs.startsWith('#/store/'), 1200);
     loadPhotos(store);
     loadComments();
   }
@@ -1003,6 +1158,8 @@
   }
 
   // 저장이 끝난 사진을 모았다가, 올리기가 모두 끝나면 스낵바로 한 번 알린다
+  // 사진을 올리는 중에 창을 닫거나 새로고침하려 하면 한 번 물어본다(올리던 사진이 끊긴다)
+  window.addEventListener('beforeunload', (e) => { if (uploadQ.running || uploadQ.waiting.length) { e.preventDefault(); e.returnValue = ''; return ''; } });
   const justSaved = [];
   const uploadedHere = new Set(); // 이 화면에서 사진을 올린 점포(완료가 되면 한 번 알려 주려고)
   let justCompleted = ''; // 방금 올린 사진으로 모든 항목이 채워진 점포 이름
@@ -1108,6 +1265,7 @@
   // 행: [시각, 점포 식별값, 점포명, 종류, 항목, 한 사람, 교체(1/0)]  종류: b 기존 사진, a 개선 사진, C/c 확인완료 표시/해제, I/i 개선 완료 누름/취소
   let actToken = 0;
   const isPhotoAct = (e) => e[3] === 'b' || e[3] === 'a';
+  const isPhotoFilter = (e) => isPhotoAct(e) || e[3] === 'X' || e[3] === 'x'; // '사진'만 보기에는 지운 것도 들어간다
   async function renderActivity() {
     document.title = '활동 기록 | 빽다방 홍보물 취합';
     const token = ++actToken;
@@ -1137,6 +1295,8 @@
       if (e[3] === 'c') return ['확인완료', 'soft', '확인완료 표시 해제'];
       if (e[3] === 'M') return ['코멘트', 'line', '코멘트 작성'];
       if (e[3] === 'm') return ['코멘트', 'soft', '코멘트 삭제'];
+      if (e[3] === 'X') return ['기존', 'soft', `${slotText(e[4])} 사진 삭제`];
+      if (e[3] === 'x') return ['개선', 'dark', `${slotText(e[4])} 사진 삭제`];
       if (e[3] === 'N') return ['후면 미해당', 'line', '후면 미해당으로 표시'];
       if (e[3] === 'n') return ['후면 미해당', 'soft', '후면 미해당 표시 해제'];
       if (e[3] === 'I') return ['개선 완료', 'line', '"개선 완료" 버튼 누름'];
@@ -1158,7 +1318,7 @@
     };
     function paintList() {
       const text = norm(q);
-      const rows = json.rows.filter((e) => (filter === '전체' || (filter === '사진' ? isPhotoAct(e) : !isPhotoAct(e)))
+      const rows = json.rows.filter((e) => (filter === '전체' || (filter === '사진' ? isPhotoFilter(e) : !isPhotoFilter(e)))
         && (!text || norm(e[2]).includes(text) || norm(e[5]).includes(text) || norm(what(e)[2]).includes(text)));
       // 더 보기 버튼이 없을 때의 빈 값(null)을 그대로 넘기면 화면에 "null" 글자가 찍히므로 걸러서 넘긴다
       listHost.replaceChildren(...[
@@ -1219,6 +1379,34 @@
     requestAnimationFrame(step);
   }
 
+  // 관리자: SV별 진행율(완료 = 개선완료 + 확인완료). 진행이 느린 순이나 팀·이름 순으로 보고, 줄을 누르면 그 SV의 점포를 검색해 준다.
+  const svState = { sort: 'slow', team: '전체' };
+  function svSection(svs) {
+    const host = h('section', { class: 'svsec', 'aria-label': 'SV별 진행율' });
+    const teams = ['전체', ...[...new Set(svs.map((o) => o.team))].sort((a, b) => a.localeCompare(b, 'ko', { numeric: true }))];
+    if (!teams.includes(svState.team)) svState.team = '전체';
+    const finished = (o) => o.done + o.confirmed;
+    const rate = (o) => (o.total ? finished(o) / o.total : 0);
+    const svRow = (o) => h('li', {}, h('a', { class: 'svrow', href: '#/', onclick: () => { home.q = o.sv; }, 'aria-label': `${o.sv} ${o.team}, 완료 ${finished(o)}곳 / 전체 ${o.total}곳. 누르면 담당 점포 검색` },
+      h('div', { class: 'svname' }, h('b', { text: o.sv }), h('small', { text: o.team })),
+      h('div', { class: 'pbar sm', 'aria-hidden': 'true' }, PROG_BAR.map((k) => h('i', { class: `s-${k}`, style: `width:${o.total ? (o[k] / o.total) * 100 : 0}%` }))),
+      h('div', { class: 'svnum' }, h('b', { text: `${finished(o)}/${o.total}` }), h('small', { text: `미진행 ${o.none}` }))));
+    function paint() {
+      const list = svs.filter((o) => svState.team === '전체' || o.team === svState.team)
+        .sort(svState.sort === 'slow' ? (a, b) => rate(a) - rate(b) || a.sv.localeCompare(b.sv, 'ko')
+          : (a, b) => a.team.localeCompare(b.team, 'ko', { numeric: true }) || a.sv.localeCompare(b.sv, 'ko'));
+      host.replaceChildren(
+        h('div', { class: 'svhead' }, h('h2', { text: 'SV별 진행율' }), h('span', { class: 'ptotal', text: `${list.length}명` })),
+        h('div', { class: 'segs inline', role: 'group', 'aria-label': '팀 고르기', style: `--n:${teams.length}` },
+          teams.map((n) => h('button', { type: 'button', class: n === svState.team ? 'segb on' : 'segb', 'aria-pressed': String(n === svState.team), onclick: () => { svState.team = n; paint(); } }, n))),
+        h('div', { class: 'segs inline', role: 'group', 'aria-label': '정렬', style: '--n:2' },
+          [['slow', '진행 느린 순'], ['team', '팀·이름 순']].map(([k, t]) => h('button', { type: 'button', class: svState.sort === k ? 'segb on' : 'segb', 'aria-pressed': String(svState.sort === k), onclick: () => { svState.sort = k; paint(); } }, t))),
+        h('ul', { class: 'svlist' }, list.length ? list.map(svRow) : h('li', { class: 'empty', text: '해당하는 SV가 없어요.' })));
+    }
+    paint();
+    return host;
+  }
+
   async function renderProgress() {
     document.title = '팀별 진행율 | 빽다방 홍보물 취합';
     const token = ++progToken;
@@ -1253,6 +1441,7 @@
         h('button', { type: 'button', class: 'pill', onclick: () => renderProgress() }, '새로고침')),
       card('전체', json.all, true),
       h('div', { class: 'pgrid' }, json.teams.map((t) => card(t.team, t))),
+      json.svs && json.svs.length ? svSection(json.svs) : null,
       h('div', { class: 'pdefs' },
         h('p', { class: 'fine' }, h('b', { text: '미진행 ' }), '사진이 한 장도 올라오지 않은 매장'),
         h('p', { class: 'fine' }, h('b', { text: '개선중 ' }), '사진은 올라왔지만 개선 후 사진이 아직 없거나, 개선 전 사진이 있는 항목 중 개선 후 사진이 없는 항목이 있는 매장'),
@@ -1308,6 +1497,7 @@
   // ---------- 라우터 ----------
   function render() {
     if (!me) return; // 로그인 전에는 로그인 화면만 보인다
+    endTour(false);
     const hash = location.hash || '#/';
     let m = hash.match(/^#\/store\/(.+)$/);
     if (m) { renderStore(decodeURIComponent(m[1])); window.scrollTo(0, 0); return; }

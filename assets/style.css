@@ -316,7 +316,7 @@ main:has(.dock:not([hidden])) { padding-bottom: calc(110px + env(safe-area-inset
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.28); animation: snack-in 0.32s var(--ease-out) both;
 }
 .snack.out { opacity: 0; transform: translateY(12px); transition: opacity 0.2s var(--ease-out), transform 0.2s var(--ease-out); }
-.snack .ck { flex: none; display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: #fff; color: #000; }
+.snack .ckd { flex: none; display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: #fff; color: #000; }
 .snack .tx { flex: 1; min-width: 0; }
 .snack .tx b { display: block; font-size: 15px; font-weight: 700; }
 .snack .tx small { display: block; font-size: 12.5px; color: #bdbdbd; }
@@ -535,13 +535,66 @@ a.uprow:active { opacity: 0.6; }
 
 /* 완료 체크: 선이 그려지듯 나타난다 */
 .ckw { display: inline-flex; vertical-align: middle; }
-.ck { width: 13px; height: 13px; margin-right: 4px; }
-.ck path { fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 1; animation: ckdraw 0.5s 0.05s ease-out forwards; }
+.ckd { width: 13px; height: 13px; margin-right: 4px; }
+.ckd path { fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 1; animation: ckdraw 0.5s 0.05s ease-out forwards; }
 @keyframes ckdraw { to { stroke-dashoffset: 0; } }
-.upok .ck, .mk.up .ck { margin-right: 3px; }
+.upok .ckd, .mk.up .ckd { margin-right: 3px; }
 .okmark { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin-left: 7px; border-radius: 50%; background: var(--ink); color: #fff; vertical-align: -3px; flex: none; }
 .okmark[hidden] { display: none; }
-.okmark .ck { width: 12px; height: 12px; margin: 0; }
+.okmark .ckd { width: 12px; height: 12px; margin: 0; }
 .pbar i { transition: width 1.1s cubic-bezier(0.2, 0.7, 0.2, 1); }
-@media (prefers-reduced-motion: reduce) { .ck path { animation: none; stroke-dashoffset: 0; } .pbar i { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .ckd path { animation: none; stroke-dashoffset: 0; } .pbar i { transition: none; } }
 .hidedone { margin: 12px 0 2px; }
+
+/* SV 홈: 내 진행 현황 · 새 코멘트 */
+.mysum { margin-top: 18px; padding: 16px 18px 18px; border: 1.5px solid var(--ink); border-radius: 22px; }
+.mshead { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.mshead b { font-size: 17px; letter-spacing: -0.01em; }
+.mspct { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.mysum .meter { margin-top: 10px; }
+.msnote { margin: 8px 0 12px; font-size: 14px; font-weight: 600; color: var(--muted); }
+.msnext { display: block; text-align: center; text-decoration: none; }
+.newcm { margin-top: 12px; padding: 14px 16px; border-radius: 18px; background: var(--soft); }
+.newcm b { font-size: 15px; }
+.newcm ul { list-style: none; margin: 8px 0 0; padding: 0; }
+.newcm li a { display: block; padding: 7px 0; font-weight: 700; text-decoration: none; color: var(--ink); border-top: 1px solid var(--line); }
+.newcm li:first-child a { border-top: 0; }
+.newcm small { display: block; margin-top: 6px; color: var(--muted); }
+.mk.cm.new { background: var(--ink); color: #fff; box-shadow: none; }
+
+/* 점포 화면: 빈 칸 안내 · 사진 지우기 · 실패 일괄 재시도 */
+.emptybar, .retrybar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0 4px; }
+.emptybar .ebn, .retrybar span { margin-right: auto; font-size: 14px; font-weight: 700; }
+.retrybar { padding: 10px 12px; border: 1.5px solid var(--ink); border-radius: 14px; }
+.cell.flash { animation: cellflash 1.2s ease-out; }
+@keyframes cellflash { 0%, 40% { box-shadow: 0 0 0 3px var(--ink); } 100% { box-shadow: 0 0 0 3px transparent; } }
+.cell .del { position: absolute; top: 6px; right: 6px; z-index: 3; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: rgba(0, 0, 0, 0.78); color: #fff; font-size: 20px; line-height: 1; cursor: pointer; }
+.cell .del:active { transform: scale(0.92); }
+
+/* 관리자: SV별 진행율 */
+.svsec { margin-top: 22px; padding: 18px 18px 8px; border: 1.5px solid var(--line); border-radius: 22px; }
+.svhead { display: flex; justify-content: space-between; align-items: baseline; }
+.svhead h2 { margin: 0; font-size: 20px; }
+.svsec .segs { margin-top: 12px; }
+.svlist { list-style: none; margin: 8px 0 0; padding: 0; }
+.svrow { display: grid; grid-template-columns: minmax(70px, 1fr) minmax(70px, 1.4fr) 64px; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); text-decoration: none; color: var(--ink); }
+.svlist li:first-child .svrow { border-top: 0; }
+.svname b { display: block; font-size: 15.5px; }
+.svname small, .svnum small { color: var(--muted); font-size: 12px; }
+.svnum { text-align: right; font-variant-numeric: tabular-nums; }
+.svnum b { display: block; font-size: 15px; }
+.pbar.sm { height: 8px; margin-top: 0; }
+
+/* 사용 방법 말풍선 안내 */
+.tourbtn { margin: 10px 0 0; }
+.tourlayer { position: fixed; inset: 0; z-index: 200; }
+.tourshield { position: fixed; inset: 0; }
+.tourhole { position: fixed; border-radius: 16px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55); pointer-events: none; transition: left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease; }
+.tourtip { position: fixed; width: min(320px, calc(100vw - 24px)); box-sizing: border-box; padding: 14px 16px 12px; border-radius: 16px; background: #fff; color: #000; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28); }
+.tourtitle { display: block; font-size: 16px; }
+.tourtext { margin: 6px 0 12px; font-size: 14px; line-height: 1.55; color: #333; }
+.tourfoot { display: flex; align-items: center; gap: 8px; }
+.tourcount { margin-right: auto; font-size: 12px; font-weight: 700; color: #888; font-variant-numeric: tabular-nums; }
+.tourskip { padding: 8px 6px; border: 0; background: none; font: inherit; font-size: 13px; color: #777; cursor: pointer; }
+.tournext { padding: 9px 16px; border: 0; border-radius: 999px; background: #000; color: #fff; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
+@media (prefers-reduced-motion: reduce) { .tourhole { transition: none; } }
