@@ -389,6 +389,27 @@ main:has(.dock:not([hidden])) { padding-bottom: calc(110px + env(safe-area-inset
 .improve.on { background: var(--ink); color: #fff; }
 .improve.on small { color: #bdbdbd; }
 
+/* ---------- 매장 화면의 관리자 코멘트 ---------- */
+.cmbox { margin-top: 14px; padding: 16px 16px 14px; border: 1.5px solid var(--line); border-radius: 18px; }
+.cmbox[hidden] { display: none; }
+.cmtitle { margin: 0 0 10px; font-size: 15px; font-weight: 800; letter-spacing: -0.01em; }
+.cmlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.cmitem { padding: 12px 14px; border-radius: 14px; background: var(--soft); }
+.cmmeta { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+.cmmeta b { color: var(--ink); font-size: 13.5px; }
+.cmdel { margin-left: auto; border: 0; background: none; padding: 6px 4px; font: inherit; font-size: 12.5px; font-weight: 700; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.cmtext { margin: 6px 0 0; font-size: 14.5px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cmempty { font-size: 13.5px; color: var(--muted); }
+.cmform { margin-top: 12px; }
+.cmlist:empty + .cmform { margin-top: 0; }
+.cminput { display: block; width: 100%; min-height: 84px; padding: 12px 14px; border: 1.5px solid var(--line); border-radius: 14px; background: #fff; font: inherit; font-size: 14.5px; line-height: 1.5; resize: vertical; outline: none; -webkit-appearance: none; appearance: none; }
+.cminput:focus { border-color: var(--ink); }
+.cmrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
+.cmcount { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.cmpost { width: auto; min-width: 130px; min-height: 42px; padding: 0 18px; font-size: 14px; }
+.cmform .form-note { margin: 8px 0 0; text-align: left; }
+.mk.cm { background: #fff; color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--ink); }
+
 /* ---------- 업로드 이력 ---------- */
 .upsearchwrap { display: block; margin-top: 14px; }
 .upsearch { width: 100%; height: 48px; padding: 0 18px; border: 1.5px solid var(--line); border-radius: 999px; background: #fff; font: inherit; font-size: 15px; outline: none; -webkit-appearance: none; appearance: none; }

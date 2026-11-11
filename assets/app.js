@@ -189,7 +189,7 @@
 
   const stat = (code) => {
     const v = data.status[code];
-    return { before: v ? Number(v[0]) || 0 : 0, after: v ? Number(v[1]) || 0 : 0, folder: v && v[3] ? v[3] : '', confirmed: !!(v && v[4]), improved: !!(v && v[5]) };
+    return { before: v ? Number(v[0]) || 0 : 0, after: v ? Number(v[1]) || 0 : 0, folder: v && v[3] ? v[3] : '', confirmed: !!(v && v[4]), improved: !!(v && v[5]), comments: v ? Number(v[6]) || 0 : 0 };
   };
 
   // ---------- 볼 수 있는 점포 ----------
@@ -280,6 +280,7 @@
       h('span', { class: 'name', text: s.name }),
       sub ? h('span', { class: 'sub', text: sub }) : null,
       h('span', { class: 'marks' },
+        t.comments ? h('i', { class: 'mk cm', text: `코멘트 ${t.comments}` }) : null,
         t.confirmed ? h('i', { class: 'mk on', text: '확인완료' }) : (t.improved ? h('i', { class: 'mk on', text: '개선완료' }) : null),
         h('i', { class: t.before >= NEED ? 'mk on' : 'mk', text: `기존 ${t.before}` }),
         h('i', { class: t.after >= NEED ? 'mk on' : 'mk', text: `개선 ${t.after}` }))));
@@ -432,7 +433,7 @@
           const local = new Map(b[kind].map((e) => [e.id, e]));
           const fresh = (json[kind] || []).map((e) => {
             const x = local.get(e.id) || e;
-            if (!x.thumb && th[x.id]) { x.thumb = th[x.id]; thumbDB.put(x.id, x.thumb); }
+            if (th[x.id] && !x.local && (!x.thumb || th[x.id].length > x.thumb.length * 1.25)) { x.thumb = th[x.id]; x.upTried = false; thumbDB.put(x.id, x.thumb); }
             return x;
           });
           // 이번 화면에서 방금 올려 아직 목록에 없는 사진은 남기되, 같은 자리의 사진이 목록에 있으면 목록 쪽이 맞다
@@ -496,10 +497,23 @@
   const repaintStore = (code) => { if (storeView && storeView.code === code) storeView.paintTable(); };
 
   // 작은 미리보기를 만든다. 사진(파일 또는 data 주소)을 받아, 글자 길이가 maxChars 이하인 작은 jpg 주소 글자로 돌려준다.
-  // 서버는 이 글자를 사진 파일의 '설명' 칸에 붙여 영구 보관한다(칸이 2만 5천 자쯤까지만 받아서 1만 8천 자 이하로 맞춘다).
-  // 큰 변·낮은 화질부터 시작해 길이가 넘으면 조금씩 더 줄인다.
-  const THUMB_MAX_CHARS = 17500;
-  const THUMB_STEPS = [[320, 0.64], [300, 0.56], [280, 0.5], [260, 0.45], [240, 0.4], [200, 0.4], [160, 0.4]];
+  // 서버는 이 글자를 사진 파일의 '설명' 칸에 붙여 영구 보관한다(칸이 2만 4천 자까지는 받는 것을 확인해서 2만 2천 자 이하로 맞춘다).
+  // 화질: ① 크게 줄일 때는 절반씩 줄여 가며 고품질로 그린다(한 번에 크게 줄이면 계단·거친 무늬가 생겨 "깨져" 보인다)
+  //       ② 큰 변·높은 화질부터 시작해, 글자 수가 넘으면 조금씩만 줄인다.
+  const THUMB_MAX_CHARS = 22000;
+  const THUMB_STEPS = [[400, 0.62], [380, 0.58], [360, 0.55], [330, 0.52], [300, 0.5], [270, 0.46], [240, 0.42], [240, 0.36]];
+  const LOWRES_EDGE = 230; // 이보다 작은 미리보기(드라이브가 만든 220 크기 등)는 원본에서 다시 만들어 바꾼다
+  function scaleDown(src, w, h, tw, th) {
+    let cur = src, cw = w, ch = h;
+    while (cw / 2 >= tw && ch / 2 >= th) {
+      const c = document.createElement('canvas'); c.width = Math.round(cw / 2); c.height = Math.round(ch / 2);
+      const g = c.getContext('2d'); g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high'; g.drawImage(cur, 0, 0, c.width, c.height);
+      cur = c; cw = c.width; ch = c.height;
+    }
+    const out = document.createElement('canvas'); out.width = tw; out.height = th;
+    const g = out.getContext('2d'); g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high'; g.drawImage(cur, 0, 0, tw, th);
+    return out;
+  }
   async function fitThumb(src, maxChars = THUMB_MAX_CHARS) {
     let bmp;
     if (typeof src === 'string') {
@@ -508,19 +522,37 @@
       bmp = await createImageBitmap(src);
     }
     const w = bmp.naturalWidth || bmp.width, h = bmp.naturalHeight || bmp.height;
-    let out = '';
+    let out = '', base = null;
     for (const [edge, quality] of THUMB_STEPS) {
-      const s = Math.min(1, edge / Math.max(w, h));
-      const c = document.createElement('canvas');
-      c.width = Math.max(1, Math.round(w * s)); c.height = Math.max(1, Math.round(h * s));
-      c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+      const s = Math.min(1, edge / Math.max(w, h)), tw = Math.max(1, Math.round(w * s)), th = Math.max(1, Math.round(h * s));
+      if (!base) base = scaleDown(bmp, w, h, tw, th); // 첫 크기까지만 원본에서 줄이고, 더 작게 줄일 때는 그 결과에서 줄인다
+      const c = base.width === tw && base.height === th ? base : scaleDown(base, base.width, base.height, tw, th);
       out = c.toDataURL('image/jpeg', quality);
       if (out.length - 23 <= maxChars) break; // 앞의 'data:image/jpeg;base64,' 23글자는 빼고 잰다
     }
     if (bmp.close) bmp.close();
     return out;
   }
-
+  // 낮은 화질(작은 크기) 미리보기를 원본에서 다시 만들어 바꾼다. 예전에 올린 사진의 드라이브 기본 미리보기(220 크기)가 대상이고, 한 사진당 이 기기에서 한 번만 시도한다.
+  // 2장씩만 동시에 받아 서버에 부담을 주지 않고, 새로 만든 것이 눈에 띄게 크지 않으면 바꾸지 않는다.
+  const upgradeQ = { running: 0, wait: [] };
+  async function upgradeThumb(store, e) {
+    if (DEMO || e.upTried || e.repairing || e.local) return;
+    e.upTried = true;
+    await new Promise((resolve) => { if (upgradeQ.running < 2) { upgradeQ.running += 1; resolve(); } else upgradeQ.wait.push(() => { upgradeQ.running += 1; resolve(); }); });
+    try {
+      const url = await fetchImage(e, 'photo', 'full');
+      if (!url) return;
+      const better = await fitThumb(url);
+      e.full = ''; // 큰 원본은 메모리에서 비운다
+      if (better && better.length > (e.thumb || '').length * 1.25) {
+        e.thumb = better; thumbDB.put(e.id, better);
+        postJson({ action: 'put_thumb', force: true, store: store.code, name: store.name, id: e.id, thumb: better.split(',')[1] }).catch(() => {});
+        repaintStore(store.code);
+      }
+    } catch { /* 못 바꿔도 지금 미리보기는 그대로 보인다 */ }
+    finally { upgradeQ.running -= 1; const next = upgradeQ.wait.shift(); if (next) next(); }
+  }
   // 서버가 작은 사진을 못 만든 사진(드라이브가 아직 안 만들었고 원본이 큰 경우)은, 원본을 받아 여기서 줄여 만든다.
   // 만든 것은 이 기기에 남겨 두고, 서버 기억에도 채워서 다음 사람은 바로 보게 한다.
   async function repairThumb(store, e) {
@@ -632,8 +664,8 @@
   // 점포 목록의 완료 표시에 쓰는 장수를 맞춘다
   function recount(code, kind, replaced) {
     const b = book(code);
-    const cur = data.status[code] || [0, 0, '', '', 0, 0];
-    const next = [cur[0] || 0, cur[1] || 0, new Date().toISOString(), cur[3] || '', cur[4] ? 1 : 0, cur[5] ? 1 : 0];
+    const cur = data.status[code] || [0, 0, '', '', 0, 0, 0];
+    const next = [cur[0] || 0, cur[1] || 0, new Date().toISOString(), cur[3] || '', cur[4] ? 1 : 0, cur[5] ? 1 : 0, cur[6] || 0];
     if (b.loaded) { next[0] = slotCount(b.before); next[1] = slotCount(b.after); }
     else if (!replaced) next[kind === 'before' ? 0 : 1] += 1;
     data.status[code] = next;
@@ -653,6 +685,65 @@
     const sheetHost = h('div', {});
     const progress = h('p', { class: 'progress' });
 
+    // 관리자 코멘트: 관리자는 쓰고 지울 수 있고, 그 점포를 맡은 SV는 읽기만 한다(서버도 같은 규칙으로 막는다). 개선 완료 버튼 바로 아래.
+    const commentsHost = h('section', { class: 'cmbox', hidden: true, 'aria-label': '관리자 코멘트' });
+    const cmState = { list: [], canWrite: isManager() };
+    const cmList = h('ul', { class: 'cmlist' });
+    const cmErr = h('p', { class: 'form-note', role: 'alert', hidden: true });
+    const cmCount = h('small', { class: 'cmcount', text: '0/500' });
+    const cmInput = h('textarea', { class: 'cminput', rows: '3', maxlength: '500', placeholder: '이 매장에 남길 코멘트 (담당 SV에게도 보여요)', 'aria-label': '코멘트 입력',
+      oninput: () => { cmCount.textContent = `${cmInput.value.length}/500`; } });
+    const cmBtn = h('button', { type: 'button', class: 'btn primary cmpost', onclick: () => postComment() }, '코멘트 남기기');
+    const bumpCommentCount = (n) => {
+      const c = data.status[code] || [0, 0, '', '', 0, 0, 0];
+      data.status[code] = [c[0] || 0, c[1] || 0, c[2] || '', c[3] || '', c[4] ? 1 : 0, c[5] ? 1 : 0, n];
+      if (!DEMO) ls.set('status-cache', JSON.stringify(data.status));
+    };
+    function paintComments() {
+      if (DEMO) return;
+      const items = cmState.list;
+      if (!cmState.canWrite && !items.length) { commentsHost.hidden = true; return; } // SV는 코멘트가 있을 때만 이 칸이 보인다
+      commentsHost.hidden = false;
+      cmList.replaceChildren(...(items.length ? items.map((c) => h('li', { class: 'cmitem' },
+        h('div', { class: 'cmmeta' }, h('b', { text: c.who }), h('span', { text: fmtDate(new Date(c.t).toISOString()) }),
+          cmState.canWrite ? h('button', { type: 'button', class: 'cmdel', 'aria-label': `${c.who}의 코멘트 삭제`, onclick: () => delComment(c) }, '삭제') : null),
+        h('p', { class: 'cmtext', text: c.text }))) : [h('li', { class: 'cmempty', text: '아직 코멘트가 없어요.' })]));
+    }
+    async function loadComments() {
+      if (DEMO) return;
+      try {
+        const r = await getJson({ action: 'comments', store: code });
+        if (!r.ok) return;
+        cmState.list = r.comments || []; cmState.canWrite = !!r.canWrite;
+        bumpCommentCount(cmState.list.length);
+        paintComments();
+      } catch { /* 코멘트를 못 불러와도 사진 올리기는 그대로 된다 */ }
+    }
+    async function postComment() {
+      const text = cmInput.value.trim();
+      if (!text) { cmErr.textContent = '코멘트를 입력해 주세요.'; cmErr.hidden = false; return; }
+      cmErr.hidden = true; cmBtn.disabled = true;
+      try {
+        const r = await postJson({ action: 'comment_add', store: code, name: store.name, text });
+        if (!r || !r.ok) throw fail((r && r.error) || 'comment_failed');
+        cmState.list.unshift(r.comment); cmInput.value = ''; cmCount.textContent = '0/500';
+        bumpCommentCount(cmState.list.length); paintComments(); snack('코멘트를 남겼어요', store.name);
+      } catch (err) {
+        cmErr.textContent = { too_long: '코멘트는 500자까지 쓸 수 있어요.', limit: '이 매장에는 코멘트를 더 남길 수 없어요(100건까지).', bad_code: '접속 코드가 맞지 않아 저장하지 못했어요. 로그아웃한 뒤 코드를 다시 입력해 주세요.', not_allowed: '관리자만 코멘트를 남길 수 있어요.' }[err && err.code] || '코멘트를 저장하지 못했어요. 잠시 뒤 다시 눌러 주세요.';
+        cmErr.hidden = false;
+      }
+      cmBtn.disabled = false;
+    }
+    async function delComment(c) {
+      if (!window.confirm('이 코멘트를 삭제할까요?')) return;
+      try {
+        const r = await postJson({ action: 'comment_del', store: code, id: c.id });
+        if (!r || !r.ok) throw fail((r && r.error) || 'comment_failed');
+        cmState.list = cmState.list.filter((x) => x.id !== c.id); bumpCommentCount(cmState.list.length); paintComments(); snack('코멘트를 삭제했어요', store.name);
+      } catch { cmErr.textContent = '코멘트를 삭제하지 못했어요. 잠시 뒤 다시 눌러 주세요.'; cmErr.hidden = false; }
+    }
+    commentsHost.append(h('h2', { class: 'cmtitle', text: '관리자 코멘트' }), cmList,
+      isManager() ? h('div', { class: 'cmform' }, cmInput, h('div', { class: 'cmrow' }, cmCount, cmBtn), cmErr) : null);
     // 확인완료: 사진을 올리지 않아도 개선이 끝났거나, 개선할 점이 없는 점포. 체크하면 팀별 진행율에서 미진행으로 세지 않는다.
     const confirmBox = h('input', { type: 'checkbox', id: 'confirm-chk', checked: stat(code).confirmed,
       onchange: (e) => toggleConfirm(e.target.checked) });
@@ -663,8 +754,8 @@
       const idx = kind === 'done' ? 5 : 4, what = kind === 'done' ? '개선 완료' : '확인완료';
       const was = !!(data.status[code] || [])[idx];
       const setLocal = (v) => {
-        const c = data.status[code] || [0, 0, '', '', 0, 0];
-        const n = [c[0] || 0, c[1] || 0, c[2] || '', c[3] || '', c[4] ? 1 : 0, c[5] ? 1 : 0];
+        const c = data.status[code] || [0, 0, '', '', 0, 0, 0];
+        const n = [c[0] || 0, c[1] || 0, c[2] || '', c[3] || '', c[4] ? 1 : 0, c[5] ? 1 : 0, c[6] || 0];
         n[idx] = v ? 1 : 0;
         data.status[code] = n;
         if (DEMO) ls.set('demo-status', JSON.stringify(data.status)); else ls.set('status-cache', JSON.stringify(data.status));
@@ -714,7 +805,7 @@
         shot = h('div', { class: 'shot' }, h('img', { alt: `${label} ${col}`, src: st.url }));
       } else if (entry.thumb) {
         // 작은 사진이 깨져서 열리지 않으면 한 번 다시 만든다
-        const img = h('img', { alt: `${label} ${col}`, src: entry.thumb, onerror: () => { if (entry.thumbBad) { entry.thumbFailed = true; entry.thumb = ''; repaintStore(code); return; } entry.thumbBad = true; entry.thumb = ''; thumbDB.del(entry.id); repairThumb(store, entry); repaintStore(code); } });
+        const img = h('img', { alt: `${label} ${col}`, src: entry.thumb, onload: (ev) => { const im = ev.target; if (Math.max(im.naturalWidth, im.naturalHeight) <= LOWRES_EDGE) upgradeThumb(store, entry); }, onerror: () => { if (entry.thumbBad) { entry.thumbFailed = true; entry.thumb = ''; repaintStore(code); return; } entry.thumbBad = true; entry.thumb = ''; thumbDB.del(entry.id); repairThumb(store, entry); repaintStore(code); } });
         shot = h('button', { type: 'button', class: 'shot', 'aria-label': `${label} ${col} 크게 보기`, onclick: () => openPhoto(entry, `${label} ${col}`) }, img);
       } else if (entry.thumbFailed && !entry.repairing) {
         // 작은 사진을 만들지 못했다: 눌러서 크게 보거나 다시 시도할 수 있다
@@ -783,7 +874,7 @@
         h('a', { class: 'back', href: nav.back, onclick: () => { if (nav.back === '#/') home.q = ''; } }, nav.back === '#/' ? '‹ 처음' : '‹ 목록'),
         h('h1', { class: 'store-name', text: store.name }),
         h('p', { class: 'sub', text: [store.team, store.sv && `${store.sv} 담당`].filter(Boolean).join(' ') }),
-        progress, confirmRow, improveBtn),
+        progress, confirmRow, improveBtn, commentsHost),
       sheetHost)));
     // 작은 사진이 하나씩 도착할 때마다 표를 통째로 다시 그리지 않도록, 한 화면 프레임에 한 번만 그린다
     let paintQueued = false;
@@ -795,6 +886,7 @@
     storeView = { code, paintTable: paintSoon };
     paintTable();
     loadPhotos(store);
+    loadComments();
   }
 
   // ---------- 사진 처리·전송 ----------
@@ -968,6 +1060,8 @@
       if (isPhotoAct(e)) return [e[3] === 'a' ? '개선' : '기존', e[3] === 'a' ? 'dark' : 'soft', `${slotText(e[4])} ${e[6] ? '사진 교체' : '사진 올림'}`];
       if (e[3] === 'C') return ['확인완료', 'line', '확인완료로 표시'];
       if (e[3] === 'c') return ['확인완료', 'soft', '확인완료 표시 해제'];
+      if (e[3] === 'M') return ['코멘트', 'line', '코멘트 작성'];
+      if (e[3] === 'm') return ['코멘트', 'soft', '코멘트 삭제'];
       if (e[3] === 'I') return ['개선 완료', 'line', '"개선 완료" 버튼 누름'];
       return ['개선 완료', 'soft', '"개선 완료" 취소'];
     };
