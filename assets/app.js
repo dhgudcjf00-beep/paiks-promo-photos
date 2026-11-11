@@ -3,6 +3,7 @@
   const cfg = window.APP_CONFIG || {};
   const DEMO = !cfg.endpoint;
   const PAGE = 30;
+  const LOG_PAGE = 10; // 로그인 기록·활동 기록은 10건씩 보여 주고 더 보기로 늘린다
   const COL = { before: '기존 사진', after: '개선 사진' };
   // 사진을 올리는 항목. 항목마다 기존 사진 한 장, 개선 사진 한 장 (구글 스크립트의 SLOTS 와 키가 같아야 한다)
   const SECTIONS = [
@@ -21,6 +22,9 @@
     ] },
   ];
   const SLOT_TOTAL = SECTIONS.reduce((n, s) => n + s.items.length, 0); // 9
+  // 완료 표시의 체크: 선이 그려지듯 나타난다(CSS .ck). 움직임을 줄인 설정이면 바로 보인다.
+  const CK_SVG = '<svg class="ck" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3.2 8.6l3.1 3.1 6.5-6.7" pathLength="1"/></svg>';
+  const ckIcon = () => h('span', { class: 'ckw', 'aria-hidden': 'true', html: CK_SVG });
   const ALL_SLOTS = SECTIONS.flatMap((sec) => sec.items.map((it) => it[0]));
   const NEED = SLOT_TOTAL - 1; // 후면은 해당하는 매장만 올리므로, 나머지 8곳이 다 차면 완료
 
@@ -286,11 +290,11 @@
     const t = stat(s.code);
     const sub = isManager() ? (withTeam ? [s.team, s.sv] : [s.sv]).filter(Boolean).join(' ') : '';
     return h('li', {}, h('a', { class: 'row', href: `#/store/${enc(s.code)}`, 'aria-label': `${s.name}, 기존 사진 ${t.before}장, 개선 사진 ${t.after}장` },
-      h('span', { class: 'name', text: s.name }),
+      h('span', { class: 'name' }, s.name, t.complete ? h('span', { class: 'okmark', title: '업로드 완료' }, ckIcon()) : null),
       sub ? h('span', { class: 'sub', text: sub }) : null,
       h('span', { class: 'marks' },
         t.comments ? h('i', { class: 'mk cm', text: `코멘트 ${t.comments}` }) : null,
-        t.complete ? h('i', { class: 'mk up', text: '✓ 업로드 완료' }) : null,
+        t.complete ? h('i', { class: 'mk up' }, ckIcon(), '업로드 완료') : null,
         t.confirmed ? h('i', { class: 'mk on', text: '확인완료' }) : (t.improved ? h('i', { class: 'mk on', text: '개선완료' }) : null),
         h('i', { class: t.before >= NEED ? 'mk on' : 'mk', text: `기존 ${t.before}` }),
         h('i', { class: t.after >= NEED ? 'mk on' : 'mk', text: `개선 ${t.after}` }))));
@@ -696,7 +700,8 @@
     let notice = '';
     const sheetHost = h('div', {});
     const progress = h('p', { class: 'progress' });
-    const upok = h('span', { class: 'upok', hidden: true, role: 'status' }, '✓ 업로드 완료');
+    const upok = h('span', { class: 'upok', hidden: true, role: 'status' }, ckIcon(), '업로드 완료');
+    const okmark = h('span', { class: 'okmark', hidden: true, title: '업로드 완료' }, ckIcon());
     const progrow = h('div', { class: 'progrow' }, progress, upok);
 
     // 관리자 코멘트: 관리자는 쓰고 지울 수 있고, 그 점포를 맡은 SV는 읽기만 한다(서버도 같은 규칙으로 막는다). 개선 완료 버튼 바로 아래.
@@ -879,10 +884,11 @@
       let ok = stat(code).complete;
       if (b.loaded) { // 올린 사진 목록을 받았으면 지금 화면 기준으로 다시 계산하고, 기억해 둔 현황에도 맞춘다
         const c = completeOf(code, stat(code).backNa, 0);
+        if (c && !ok && uploadedHere.has(code)) { uploadedHere.delete(code); snack('✓ 업로드 완료', `${store.name}의 모든 항목이 올라갔어요`); }
         if (c !== (ok ? 1 : 0)) { const n = mkStatus(data.status[code]); n[8] = c; data.status[code] = n; if (!DEMO) ls.set('status-cache', JSON.stringify(data.status)); else ls.set('demo-status', JSON.stringify(data.status)); }
         ok = !!c;
       }
-      upok.hidden = !ok;
+      upok.hidden = !ok; okmark.hidden = !ok;
       sheetHost.replaceChildren(...[
         notice ? h('p', { class: 'form-note', role: 'alert', text: notice }) : null,
         b.loading ? h('div', { class: 'loadrow', role: 'status', 'aria-live': 'polite' }, spinnerSvg(22, 5), h('span', { text: '올린 사진을 불러오는 중이에요' })) : null,
@@ -906,7 +912,7 @@
       if (prev && (prev.state === 'up' || prev.state === 'wait')) return;
       if (prev && prev.file !== file) URL.revokeObjectURL(prev.url);
       const st = { state: uploadQ.running < UPLOAD_PARALLEL ? 'up' : 'wait', file, url: prev && prev.file === file ? prev.url : URL.createObjectURL(file) };
-      working.set(key, st); notice = ''; paintTable();
+      working.set(key, st); notice = ''; uploadedHere.add(code); paintTable();
       try {
         await schedule(async () => {
           st.state = 'up';
@@ -933,7 +939,7 @@
     view.replaceChildren(h('div', { class: 'wrap' }, h('div', { class: 'sgrid' },
       h('div', { class: 'sside' },
         h('a', { class: 'back', href: nav.back, onclick: () => { if (nav.back === '#/') home.q = ''; } }, nav.back === '#/' ? '‹ 처음' : '‹ 목록'),
-        h('h1', { class: 'store-name', text: store.name }),
+        h('h1', { class: 'store-name' }, store.name, okmark),
         h('p', { class: 'sub', text: [store.team, store.sv && `${store.sv} 담당`].filter(Boolean).join(' ') }),
         progrow, confirmRow, improveBtn, commentsHost),
       sheetHost)));
@@ -994,13 +1000,14 @@
 
   // 저장이 끝난 사진을 모았다가, 올리기가 모두 끝나면 스낵바로 한 번 알린다
   const justSaved = [];
+  const uploadedHere = new Set(); // 이 화면에서 사진을 올린 점포(완료가 되면 한 번 알려 주려고)
   let justCompleted = ''; // 방금 올린 사진으로 모든 항목이 채워진 점포 이름
   const slotLabel = (slot) => { for (const sec of SECTIONS) for (const it of sec.items) if (it[0] === slot) return it[1]; return slot; };
   function flushSaved() {
     if (uploadQ.running || uploadQ.waiting.length || !justSaved.length) return;
     const n = justSaved.length, last = justSaved[n - 1];
     justSaved.length = 0;
-    if (justCompleted) { const nm = justCompleted; justCompleted = ''; snack('✓ 업로드 완료', `${nm}의 모든 항목이 올라갔어요`); return; }
+    if (justCompleted) { const nm = justCompleted; justCompleted = ''; uploadedHere.clear(); snack('✓ 업로드 완료', `${nm}의 모든 항목이 올라갔어요`); return; }
     snack(n === 1 ? `${last.label} · ${COL[last.kind]}을 저장했어요` : `사진 ${n}장을 저장했어요`, '구글 드라이브에 올라갔어요');
   }
 
@@ -1073,7 +1080,7 @@
       h('div', { class: 'lnet' }, h('i', { class: `bd ${l[4] === '사내망' ? 'dark' : (l[4] === '외부' ? 'line' : 'soft')}`, text: l[4] })),
       h('div', { class: 'lres' }, h('i', { class: `bd ${l[5] === '실패' ? 'dark' : 'soft'}`, text: l[5] })));
 
-    let filter = '전체';
+    let filter = '전체', shown = LOG_PAGE;
     const stat = (k, v) => h('div', { class: 'stat' }, h('div', { class: 'k', text: k }), h('div', { class: 'v', text: String(v) }));
     function paint() {
       const rows = json.logs.filter((l) => filter === '전체' || l[4] === filter);
@@ -1083,9 +1090,10 @@
         h('div', { class: 'stats' }, stat('오늘 로그인', json.stats.today), stat('외부 접속', json.stats.outside), stat('로그인 실패', json.stats.failed)),
         netCard,
         h('div', { class: 'segs inline', role: 'group', 'aria-label': '접속 구분', style: `--n:${opts.length}` },
-          opts.map((n) => h('button', { type: 'button', class: n === filter ? 'segb on' : 'segb', 'aria-pressed': String(n === filter), onclick: () => { filter = n; paint(); } }, n))),
+          opts.map((n) => h('button', { type: 'button', class: n === filter ? 'segb on' : 'segb', 'aria-pressed': String(n === filter), onclick: () => { filter = n; shown = LOG_PAGE; paint(); } }, n))),
         h('div', { class: 'loghead', 'aria-hidden': 'true' }, ['이름', '로그인 시각', 'IP', '구분', '결과'].map((t) => h('span', { text: t }))),
-        h('ul', { class: 'loglist' }, rows.length ? rows.map(logRow) : h('li', { class: 'empty', text: '기록이 없어요.' })),
+        h('ul', { class: 'loglist' }, rows.length ? rows.slice(0, shown).map(logRow) : h('li', { class: 'empty', text: '기록이 없어요.' })),
+        rows.length > shown ? h('button', { type: 'button', class: 'btn ghost block more', onclick: () => { shown += LOG_PAGE; paint(); } }, `더 보기 (${rows.length - shown}건 남음)`) : null,
         h('p', { class: 'fine', text: '사내망은 등록한 회사 IP 기준으로 구분해요. 접속 위치는 기록하지 않아요.' }));
     }
     paint();
@@ -1116,7 +1124,7 @@
     if (token !== actToken) return;
     if (!json.ok) { if (json.error === 'not_allowed') denied(); else shell(h('p', { class: 'empty', text: '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
 
-    let filter = '전체', q = '', shown = 50;
+    let filter = '전체', q = '', shown = LOG_PAGE;
     const slotText = (slot) => (slot ? slotLabel(slot) : '항목 미상');
     // 한 일을 글자로: [뱃지 글자, 뱃지 모양, 설명]
     const what = (e) => {
@@ -1153,13 +1161,13 @@
         h('p', { class: 'meta-line', text: `${rows.length}건` }),
         h('div', { class: 'uphead', 'aria-hidden': 'true' }, ['시각', '점포', '한 일', '누른 사람'].map((t) => h('span', { text: t }))),
         h('ul', { class: 'uplist' }, rows.length ? rows.slice(0, shown).map(actRow) : h('li', { class: 'empty', text: '기록이 없어요.' })),
-        rows.length > shown ? h('button', { type: 'button', class: 'btn ghost block more', onclick: () => { shown += 50; paintList(); } }, `더 보기 (${rows.length - shown}건 남음)`) : null,
+        rows.length > shown ? h('button', { type: 'button', class: 'btn ghost block more', onclick: () => { shown += LOG_PAGE; paintList(); } }, `더 보기 (${rows.length - shown}건 남음)`) : null,
       ].filter(Boolean));
     }
-    input.addEventListener('input', () => { q = input.value.trim(); shown = 50; paintList(); });
+    input.addEventListener('input', () => { q = input.value.trim(); shown = LOG_PAGE; paintList(); });
     const segs = h('div', { class: 'segs inline', role: 'group', 'aria-label': '종류', style: '--n:3' },
       ['전체', '사진', '표시'].map((n) => h('button', { type: 'button', class: n === '전체' ? 'segb on' : 'segb', 'aria-pressed': String(n === '전체'), onclick: () => {
-        filter = n; shown = 50;
+        filter = n; shown = LOG_PAGE;
         segs.querySelectorAll('.segb').forEach((b) => { const on = b.textContent === n; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
         paintList();
       } }, n)));
@@ -1187,6 +1195,26 @@
   }
   const progHref = (team, kind) => `#/progress/${enc(team)}/${kind}`;
 
+  // 진행율 화면이 열리면 숫자는 0에서부터 세어 올라가고, 막대는 왼쪽에서부터 차오른다(움직임을 줄인 설정이면 바로 최종 값)
+  function runCountUp() {
+    if (window.__noAnim || (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches)) return;
+    const bars = [...view.querySelectorAll('.pbar i')], nums = [...view.querySelectorAll('.pn[data-n]')], pcts = [...view.querySelectorAll('.pp[data-n]')];
+    if (!nums.length) return;
+    bars.forEach((i) => { i.dataset.w = i.style.width; i.style.transition = 'none'; i.style.width = '0%'; });
+    nums.forEach((e) => { e.textContent = '0곳'; });
+    pcts.forEach((e) => { e.textContent = pctText(0, Number(e.dataset.t)); });
+    requestAnimationFrame(() => requestAnimationFrame(() => bars.forEach((i) => { i.style.transition = 'width 1.1s cubic-bezier(.2,.7,.2,1)'; i.style.width = i.dataset.w; })));
+    const t0 = performance.now(), D = 1100;
+    const step = (now) => {
+      if (!nums[0].isConnected) return;
+      const p = Math.min(1, (now - t0) / D), e = 1 - Math.pow(1 - p, 3);
+      nums.forEach((el) => { el.textContent = `${Math.round(Number(el.dataset.n) * e)}곳`; });
+      pcts.forEach((el) => { el.textContent = pctText(Number(el.dataset.n) * e, Number(el.dataset.t)); });
+      if (p < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
   async function renderProgress() {
     document.title = '팀별 진행율 | 빽다방 홍보물 취합';
     const token = ++progToken;
@@ -1211,8 +1239,8 @@
         h('a', { class: 'plink', href: progHref(big ? 'all' : title, k), 'aria-label': `${title} ${t} ${o[k]}곳, 매장 목록 보기` },
           h('i', { class: `sw s-${k}`, 'aria-hidden': 'true' }),
           h('span', { class: 'pl', text: t }),
-          h('span', { class: 'pn', text: `${o[k]}곳` }),
-          h('span', { class: 'pp', text: pctText(o[k], o.total) }),
+          h('span', { class: 'pn', 'data-n': String(o[k]), text: `${o[k]}곳` }),
+          h('span', { class: 'pp', 'data-n': String(o[k]), 'data-t': String(o.total), text: pctText(o[k], o.total) }),
           h('span', { class: 'go', 'aria-hidden': 'true', text: '›' }))))));
 
     shell(
@@ -1228,6 +1256,7 @@
         h('p', { class: 'fine' }, h('b', { text: '확인완료 ' }), '매장 화면에서 확인완료로 체크한 매장(사진이 없어도 미진행으로 세지 않아요)'),
         h('p', { class: 'fine', text: '모든 항목에 사진이 꼭 있어야 하는 것은 아니라서, 올라와 있는 항목끼리만 맞춰 봐요.' }),
         h('p', { class: 'fine', text: '각 항목을 누르면 그 팀의 해당 매장 목록을 볼 수 있어요.' })));
+    runCountUp();
   }
 
   // ---------- 진행율 항목을 눌렀을 때: 그 팀의 해당 상태 매장 목록 ----------
