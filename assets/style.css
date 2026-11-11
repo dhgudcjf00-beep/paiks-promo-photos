@@ -389,6 +389,19 @@ main:has(.dock:not([hidden])) { padding-bottom: calc(110px + env(safe-area-inset
 .improve.on { background: var(--ink); color: #fff; }
 .improve.on small { color: #bdbdbd; }
 
+/* ---------- 업로드 이력 ---------- */
+.upsearchwrap { display: block; margin-top: 14px; }
+.upsearch { width: 100%; height: 48px; padding: 0 18px; border: 1.5px solid var(--line); border-radius: 999px; background: #fff; font: inherit; font-size: 15px; outline: none; -webkit-appearance: none; appearance: none; }
+.upsearch:focus { border-color: var(--ink); }
+.uphead { display: none; }
+.uplist { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.uprow { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "store who" "what what" "time time"; gap: 4px 10px; padding: 14px 4px; border-bottom: 1px solid var(--line); align-items: center; color: inherit; }
+a.uprow:active { opacity: 0.6; }
+.uprow .ustore { grid-area: store; font-size: 15.5px; font-weight: 700; letter-spacing: -0.01em; min-width: 0; overflow-wrap: anywhere; }
+.uprow .uwho { grid-area: who; font-size: 13.5px; font-weight: 600; color: var(--muted); }
+.uprow .uwhat { grid-area: what; display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+.uprow .utime { grid-area: time; font-size: 13px; color: var(--muted); }
+
 /* ---------- 팀별 진행율 ---------- */
 .pmeta { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .pmeta .meta-line { margin: 0; }
@@ -424,6 +437,9 @@ main:has(.dock:not([hidden])) { padding-bottom: calc(110px + env(safe-area-inset
 
 /* PC: 넓은 화면 */
 @media (min-width: 900px) {
+  .uphead { display: grid; grid-template-columns: 170px minmax(0, 1fr) 190px 100px; gap: 12px; padding: 0 4px 10px; font-size: 12.5px; font-weight: 700; color: var(--muted); border-bottom: 1.5px solid var(--ink); }
+  .uprow { grid-template-columns: 170px minmax(0, 1fr) 190px 100px; grid-template-areas: "time store what who"; gap: 12px; padding: 16px 4px; }
+  .uprow .utime { font-size: 14px; }
   .pgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .pcard { padding: 22px 24px 16px; }
   .wrap { width: min(100%, 1040px); padding: 0 32px; }

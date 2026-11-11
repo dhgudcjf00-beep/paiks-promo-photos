@@ -336,6 +336,8 @@
           data.links.folder ? externalLink('드라이브 폴더 열기', data.links.folder) : null,
           canLog() ? h('a', { class: 'pill dark', href: '#/log' },
             h('span', { 'aria-hidden': 'true', html: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3z"/></svg>' }), '로그인 기록') : null,
+          canLog() ? h('a', { class: 'pill dark', href: '#/uploads' },
+            h('span', { 'aria-hidden': 'true', html: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V5M7.5 9.5L12 5l4.5 4.5M5 19h14"/></svg>' }), '업로드 이력') : null,
         ].filter(Boolean);
         if (tools.length) parts.push(h('div', { class: 'admin-tools' }, tools));
       } else {
@@ -934,6 +936,70 @@
     paint();
   }
 
+  // ---------- 업로드 이력 (김규민, 오형철 계정에서만) ----------
+  // 시트·깃허브에는 남기지 않고 서버 안에만 있는 이력을 보여준다. 행: [시각, 점포 식별값, 점포명, 'b'(기존)/'a'(개선), 항목, 올린 사람]
+  let upToken = 0;
+  async function renderUploads() {
+    document.title = '업로드 이력 | 빽다방 홍보물 취합';
+    const token = ++upToken;
+    const back = h('a', { class: 'back', href: '#/', onclick: () => { home.q = ''; } }, '‹ 처음');
+    const shell = (...kids) => { if (token === upToken) view.replaceChildren(h('div', { class: 'wrap' }, back, h('h1', { class: 'page-title', text: '업로드 이력' }), ...kids)); };
+    const denied = () => {
+      if (token !== upToken) return;
+      view.replaceChildren(h('div', { class: 'wrap' }, back, h('div', { class: 'denied' },
+        h('span', { class: 'lockc', 'aria-hidden': 'true', html: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>' }),
+        h('h1', { text: '볼 수 없는 화면이에요' }),
+        h('p', { text: '업로드 이력은 김규민, 오형철 계정에서만 볼 수 있어요.' }))));
+    };
+    if (!canLog()) { denied(); return; }
+    shell(loadingBlock('업로드 이력을 불러오는 중이에요'));
+    let json;
+    try { json = await getJson({ action: 'uploads' }); }
+    catch { shell(h('p', { class: 'empty', text: '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
+    if (token !== upToken) return;
+    if (!json.ok) { if (json.error === 'not_allowed') denied(); else shell(h('p', { class: 'empty', text: '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
+
+    let kind = '전체', q = '', shown = 50;
+    const label = (slot) => (slot ? slotLabel(slot) : '항목 미상');
+    const stat = (k, v) => h('div', { class: 'stat' }, h('div', { class: 'k', text: k }), h('div', { class: 'v', text: String(v) }));
+    const input = h('input', { type: 'search', class: 'upsearch', placeholder: '점포명이나 올린 사람으로 찾기', autocomplete: 'off', 'aria-label': '업로드 이력 검색' });
+    const listHost = h('div', {});
+    const upRow = (e) => {
+      const exists = data.byCode.has(e[1]);
+      const cells = [
+        h('div', { class: 'utime', text: fmtDate(new Date(e[0]).toISOString()) }),
+        h('div', { class: 'ustore', text: e[2] || e[1] }),
+        h('div', { class: 'uwhat' }, h('i', { class: `bd ${e[3] === 'a' ? 'dark' : 'soft'}`, text: e[3] === 'a' ? '개선' : '기존' }), h('span', { text: label(e[4]) })),
+        h('div', { class: 'uwho', text: e[5] }),
+      ];
+      return h('li', {}, exists ? h('a', { class: 'uprow', href: `#/store/${enc(e[1])}` }, ...cells) : h('div', { class: 'uprow', role: 'group' }, ...cells));
+    };
+    function paintList() {
+      const text = norm(q);
+      const rows = json.rows.filter((e) => (kind === '전체' || (kind === '개선' ? e[3] === 'a' : e[3] === 'b'))
+        && (!text || norm(e[2]).includes(text) || norm(e[5]).includes(text) || norm(label(e[4])).includes(text)));
+      listHost.replaceChildren(
+        h('p', { class: 'meta-line', text: `${rows.length}장` }),
+        h('div', { class: 'uphead', 'aria-hidden': 'true' }, ['올린 시각', '점포', '구분 · 항목', '올린 사람'].map((t) => h('span', { text: t }))),
+        h('ul', { class: 'uplist' }, rows.length ? rows.slice(0, shown).map(upRow) : h('li', { class: 'empty', text: '이력이 없어요.' })),
+        rows.length > shown ? h('button', { type: 'button', class: 'btn ghost block more', onclick: () => { shown += 50; paintList(); } }, `더 보기 (${rows.length - shown}장 남음)`) : null);
+    }
+    input.addEventListener('input', () => { q = input.value.trim(); shown = 50; paintList(); });
+    const segs = h('div', { class: 'segs inline', role: 'group', 'aria-label': '구분', style: '--n:3' },
+      ['전체', '기존', '개선'].map((n) => h('button', { type: 'button', class: n === '전체' ? 'segb on' : 'segb', 'aria-pressed': String(n === '전체'), onclick: (ev) => {
+        kind = n; shown = 50;
+        segs.querySelectorAll('.segb').forEach((b) => { const on = b.textContent === n; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+        paintList();
+      } }, n)));
+    shell(
+      h('p', { class: 'meta-line', text: '김규민, 오형철 계정에서만 보여요' }),
+      h('div', { class: 'stats' }, stat('오늘 올린 사진', json.stats.today), stat('최근 7일', json.stats.week), stat('오늘 올린 사람', json.stats.people)),
+      h('label', { class: 'upsearchwrap' }, input),
+      segs, listHost,
+      h('p', { class: 'fine', text: `업로드 이력은 구글 시트·드라이브·깃허브에 남기지 않고 서버 안에만 최근 ${json.keep || 1500}장까지 보관해요.` }));
+    paintList();
+  }
+
   // ---------- 팀별 진행율 (관리자) ----------
   // 점포마다 한 가지 상태: 확인완료(체크한 점포) / 미진행(사진이 한 장도 없음) / 개선완료(개선 전 사진이 있는 항목마다 개선 후 사진이 있음) / 개선중(그 밖에 일부 올라옴)
   const PROG_KINDS = [['none', '미진행'], ['doing', '개선중'], ['done', '개선완료'], ['confirmed', '확인완료']];
@@ -1046,6 +1112,7 @@
     m = hash.match(/^#\/progress\/([^/]+)\/([a-z]+)$/);
     if (m) { renderProgressList(decodeURIComponent(m[1]), m[2]); window.scrollTo(0, 0); return; }
     if (hash === '#/log') { renderLog(); window.scrollTo(0, 0); return; }
+    if (hash === '#/uploads') { renderUploads(); window.scrollTo(0, 0); return; }
     m = hash.match(/^#\/list\/(.+)$/);
     if (m) { nav.back = hash; renderList(decodeURIComponent(m[1])); } else { nav.back = '#/'; renderHome(); }
     window.scrollTo(0, 0);
