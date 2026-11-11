@@ -189,7 +189,7 @@
 
   const stat = (code) => {
     const v = data.status[code];
-    return { before: v ? Number(v[0]) || 0 : 0, after: v ? Number(v[1]) || 0 : 0, folder: v && v[3] ? v[3] : '', confirmed: !!(v && v[4]) };
+    return { before: v ? Number(v[0]) || 0 : 0, after: v ? Number(v[1]) || 0 : 0, folder: v && v[3] ? v[3] : '', confirmed: !!(v && v[4]), improved: !!(v && v[5]) };
   };
 
   // ---------- 볼 수 있는 점포 ----------
@@ -209,7 +209,7 @@
   }
 
   const listTitle = (key) => ({ mine: '내 담당 점포', all: '전체 점포' })[key] || key;
-  const done = (s) => { const t = stat(s.code); return t.confirmed || (t.before >= NEED && t.after >= NEED); }; // 확인완료로 표시한 점포는 사진이 없어도 끝난 것으로 본다
+  const done = (s) => { const t = stat(s.code); return t.confirmed || t.improved || (t.before >= NEED && t.after >= NEED); }; // 확인완료·개선 완료 버튼을 누른 점포는 사진이 다 없어도 끝난 것으로 본다
 
   // ---------- 검색 ----------
   const CHO = 'ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ';
@@ -241,7 +241,7 @@
 
   // 아직 안 올린 점포가 위로 오게
   function byProgress(list) {
-    const n = (s) => { const t = stat(s.code); return t.confirmed ? 1000 : Math.min(t.before, NEED) + Math.min(t.after, NEED); };
+    const n = (s) => { const t = stat(s.code); return t.confirmed || t.improved ? 1000 : Math.min(t.before, NEED) + Math.min(t.after, NEED); };
     return [...list].sort((a, b) => n(a) - n(b) || a.name.localeCompare(b.name, 'ko'));
   }
 
@@ -280,7 +280,7 @@
       h('span', { class: 'name', text: s.name }),
       sub ? h('span', { class: 'sub', text: sub }) : null,
       h('span', { class: 'marks' },
-        t.confirmed ? h('i', { class: 'mk on', text: '확인완료' }) : null,
+        t.confirmed ? h('i', { class: 'mk on', text: '확인완료' }) : (t.improved ? h('i', { class: 'mk on', text: '개선완료' }) : null),
         h('i', { class: t.before >= NEED ? 'mk on' : 'mk', text: `기존 ${t.before}` }),
         h('i', { class: t.after >= NEED ? 'mk on' : 'mk', text: `개선 ${t.after}` }))));
   }
@@ -627,8 +627,8 @@
   // 점포 목록의 완료 표시에 쓰는 장수를 맞춘다
   function recount(code, kind, replaced) {
     const b = book(code);
-    const cur = data.status[code] || [0, 0, '', '', 0];
-    const next = [cur[0] || 0, cur[1] || 0, new Date().toISOString(), cur[3] || '', cur[4] ? 1 : 0];
+    const cur = data.status[code] || [0, 0, '', '', 0, 0];
+    const next = [cur[0] || 0, cur[1] || 0, new Date().toISOString(), cur[3] || '', cur[4] ? 1 : 0, cur[5] ? 1 : 0];
     if (b.loaded) { next[0] = slotCount(b.before); next[1] = slotCount(b.after); }
     else if (!replaced) next[kind === 'before' ? 0 : 1] += 1;
     data.status[code] = next;
@@ -653,28 +653,45 @@
       onchange: (e) => toggleConfirm(e.target.checked) });
     const confirmRow = h('label', { class: 'confirm', for: 'confirm-chk' }, confirmBox,
       h('span', { class: 'ctext' }, h('b', { text: '확인완료 매장' }), h('small', { text: '사진을 올리지 않아도 개선이 끝났거나, 개선할 점이 없는 매장이에요' })));
-    async function toggleConfirm(on) {
-      const cur = data.status[code] || [0, 0, '', '', 0];
-      const was = !!cur[4];
+    // 확인완료(체크)와 "개선 완료"(버튼)는 같은 방식으로 저장한다. 현황 칸: [.., 확인완료(4), 개선완료 직접 누름(5)]
+    async function setFlag(kind, on, revertUi) {
+      const idx = kind === 'done' ? 5 : 4, what = kind === 'done' ? '개선 완료' : '확인완료';
+      const was = !!(data.status[code] || [])[idx];
       const setLocal = (v) => {
-        const c = data.status[code] || [0, 0, '', '', 0];
-        data.status[code] = [c[0] || 0, c[1] || 0, c[2] || '', c[3] || '', v ? 1 : 0];
+        const c = data.status[code] || [0, 0, '', '', 0, 0];
+        const n = [c[0] || 0, c[1] || 0, c[2] || '', c[3] || '', c[4] ? 1 : 0, c[5] ? 1 : 0];
+        n[idx] = v ? 1 : 0;
+        data.status[code] = n;
         if (DEMO) ls.set('demo-status', JSON.stringify(data.status)); else ls.set('status-cache', JSON.stringify(data.status));
       };
-      setLocal(on);
-      if (DEMO) { snack(on ? '확인완료로 표시했어요' : '확인완료 표시를 풀었어요', store.name); return; }
-      confirmBox.disabled = true;
+      setLocal(on); paintImprove();
+      const title = on ? `${what}로 표시했어요` : `${what} 표시를 풀었어요`;
+      if (DEMO) { snack(title, store.name); return; }
+      confirmBox.disabled = true; improveBtn.disabled = true;
       try {
-        const r = await postJson({ action: 'confirm', store: code, name: store.name, on });
+        const r = await postJson({ action: 'confirm', kind, store: code, name: store.name, on });
         if (!r || !r.ok) throw fail((r && r.error) || 'confirm_failed');
-        snack(on ? '확인완료로 표시했어요' : '확인완료 표시를 풀었어요', store.name);
+        snack(title, store.name);
       } catch (err) {
-        setLocal(was); confirmBox.checked = was; // 저장하지 못했으면 원래대로 돌려 놓는다
-        notice = err && err.code === 'bad_code' ? '접속 코드가 맞지 않아 저장하지 못했어요. 로그아웃한 뒤 코드를 다시 입력해 주세요.' : '확인완료 표시를 저장하지 못했어요. 잠시 뒤 다시 눌러 주세요.';
+        setLocal(was); revertUi(was); // 저장하지 못했으면 원래대로 돌려 놓는다
+        notice = err && err.code === 'bad_code' ? '접속 코드가 맞지 않아 저장하지 못했어요. 로그아웃한 뒤 코드를 다시 입력해 주세요.' : `${what} 표시를 저장하지 못했어요. 잠시 뒤 다시 눌러 주세요.`;
         paintTable();
       }
-      confirmBox.disabled = false;
+      confirmBox.disabled = false; improveBtn.disabled = false;
     }
+    const toggleConfirm = (on) => setFlag('confirmed', on, (was) => { confirmBox.checked = was; });
+
+    // 몇 곳만 개선하는 점포는 사진 항목이 다 채워지지 않아 개선중으로 남는다. 개선이 끝났으면 이 버튼으로 직접 개선완료로 올린다.
+    const improveBtn = h('button', { type: 'button', class: 'improve', id: 'improve-btn', onclick: () => setFlag('done', !stat(code).improved, paintImprove) });
+    function paintImprove() {
+      const on = stat(code).improved;
+      improveBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      improveBtn.classList.toggle('on', on);
+      improveBtn.replaceChildren(
+        h('span', { class: 'itx' }, h('b', { text: on ? '✓ 개선 완료됨' : '개선 완료' }),
+          h('small', { text: on ? '눌러서 취소할 수 있어요' : '전체 항목이 아니라 몇 곳만 개선해도 되는 매장이면, 개선이 끝났을 때 눌러 주세요' })));
+    }
+    paintImprove();
 
     function cell(kind, slot, label) {
       const b = book(code);
@@ -761,7 +778,7 @@
         h('a', { class: 'back', href: nav.back, onclick: () => { if (nav.back === '#/') home.q = ''; } }, nav.back === '#/' ? '‹ 처음' : '‹ 목록'),
         h('h1', { class: 'store-name', text: store.name }),
         h('p', { class: 'sub', text: [store.team, store.sv && `${store.sv} 담당`].filter(Boolean).join(' ') }),
-        progress, confirmRow),
+        progress, confirmRow, improveBtn),
       sheetHost)));
     // 작은 사진이 하나씩 도착할 때마다 표를 통째로 다시 그리지 않도록, 한 화면 프레임에 한 번만 그린다
     let paintQueued = false;

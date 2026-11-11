@@ -372,6 +372,18 @@ main:has(.dock:not([hidden])) { padding-bottom: calc(110px + env(safe-area-inset
 .confirm .ctext b { font-size: 15px; font-weight: 800; }
 .confirm .ctext small { font-size: 12.5px; line-height: 1.5; color: var(--muted); }
 
+/* 점포 화면의 "개선 완료" 버튼(몇 곳만 개선하는 점포를 직접 개선완료로 올린다) */
+.improve { display: block; width: 100%; margin-top: 10px; padding: 14px 16px; border: 1.5px solid var(--ink); border-radius: 16px; background: #fff; color: var(--ink); font: inherit; text-align: left; cursor: pointer;
+  transition: transform var(--press) var(--ease-out), background var(--press) var(--ease-out); -webkit-tap-highlight-color: transparent; }
+.improve:active:not(:disabled) { transform: scale(0.985); }
+.improve:disabled { opacity: 0.6; cursor: default; }
+.improve:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.improve .itx { display: flex; flex-direction: column; gap: 2px; }
+.improve b { font-size: 15.5px; font-weight: 800; }
+.improve small { font-size: 12.5px; line-height: 1.5; color: var(--muted); font-weight: 400; }
+.improve.on { background: var(--ink); color: #fff; }
+.improve.on small { color: #bdbdbd; }
+
 /* ---------- 팀별 진행율 ---------- */
 .pmeta { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .pmeta .meta-line { margin: 0; }
