@@ -222,7 +222,7 @@
   }
 
   const listTitle = (key) => ({ mine: '내 담당 점포', all: '전체 점포' })[key] || key;
-  const done = (s) => { const t = stat(s.code); return t.confirmed || t.improved || (t.before >= NEED && t.after >= NEED); }; // 확인완료·개선 완료 버튼을 누른 점포는 사진이 다 없어도 끝난 것으로 본다
+  const done = (s) => { const t = stat(s.code); return t.confirmed || t.improved || t.complete || (t.before >= NEED && t.after >= NEED); }; // 확인완료·개선 완료 버튼을 누른 점포는 사진이 다 없어도 끝난 것으로 본다
 
   // ---------- 검색 ----------
   const CHO = 'ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ';
@@ -252,9 +252,9 @@
     return hits.map((x) => x[1]);
   }
 
-  // 아직 안 올린 점포가 위로 오게
+  // 아직 안 올린 점포가 위로, 업로드 완료 점포는 맨 아래로
   function byProgress(list) {
-    const n = (s) => { const t = stat(s.code); return t.confirmed || t.improved ? 1000 : Math.min(t.before, NEED) + Math.min(t.after, NEED); };
+    const n = (s) => { const t = stat(s.code); return t.complete ? 2000 : (t.confirmed || t.improved ? 1000 : Math.min(t.before, NEED) + Math.min(t.after, NEED)); };
     return [...list].sort((a, b) => n(a) - n(b) || a.name.localeCompare(b.name, 'ko'));
   }
 
@@ -394,21 +394,22 @@
   }
 
   // ---------- 팀 목록 ----------
-  const listState = { key: '', shown: PAGE };
+  const listState = { key: '', shown: PAGE, hideDone: false }; // hideDone: '완료 제외'(업로드 완료 점포를 목록에서 감춘다)
 
   function renderList(wanted) {
     const key = isManager() ? wanted : 'mine'; // 직원은 어떤 주소로 들어와도 본인 담당 점포만
     document.title = `${listTitle(key)} | 빽다방 홍보물 취합`;
     if (listState.key !== key) { listState.key = key; listState.shown = PAGE; }
-    const pool = byProgress(listPool(key));
-    const left = pool.filter((s) => !done(s)).length;
+    const full = byProgress(listPool(key));
+    const left = full.filter((s) => !done(s)).length;
+    const pool = listState.hideDone ? full.filter((s) => !stat(s.code).complete) : full;
     const list = h('ul', { class: 'rows' });
-    if (!pool.length) list.append(h('li', { class: 'empty', text: '볼 수 있는 점포가 없어요.' }));
+    if (!pool.length) list.append(h('li', { class: 'empty', text: full.length ? '완료를 제외하면 남은 점포가 없어요.' : '볼 수 있는 점포가 없어요.' }));
     pool.slice(0, listState.shown).forEach((s) => list.append(row(s, key === 'all')));
     const more = pool.length > listState.shown
       ? h('button', { type: 'button', class: 'btn ghost block more', onclick: () => { listState.shown += PAGE; renderList(key); } }, `더 보기 (${pool.length - listState.shown}곳 남음)`)
       : null;
-    const pct = pool.length ? Math.round(((pool.length - left) / pool.length) * 100) : 0;
+    const pct = full.length ? Math.round(((full.length - left) / full.length) * 100) : 0;
     const names = isManager() ? [...teamList(), '전체'] : [];
     const cur = key === 'all' ? '전체' : key;
     view.replaceChildren(h('div', { class: 'wrap' },
@@ -417,10 +418,11 @@
       h('div', { class: 'titlerow' },
         h('h1', { class: 'page-title', text: listTitle(key) }),
         isManager() && key !== 'mine' ? h('a', { class: 'pill', id: 'none-link', href: progHref(key, 'none') }, '미진행 매장 보기', h('span', { 'aria-hidden': 'true', text: '›' })) : null),
-      h('p', { class: 'meta-line', text: `${pool.length}곳 중 ${left}곳을 아직 못 올렸어요` }),
+      h('p', { class: 'meta-line', text: `${full.length}곳 중 ${left}곳을 아직 못 올렸어요` }),
       h('div', { class: 'meter', 'aria-hidden': 'true' }, h('i', { style: `width:${pct}%` })),
       names.length ? h('div', { class: 'segs left', role: 'group', 'aria-label': '팀 바꾸기', style: `--n:${names.length}` },
         names.map((n) => h('a', { class: n === cur ? 'segb on' : 'segb', href: `#/list/${enc(n === '전체' ? 'all' : n)}`, 'aria-current': n === cur ? 'page' : false }, n))) : null,
+      h('button', { type: 'button', class: listState.hideDone ? 'pill dark hidedone' : 'pill hidedone', id: 'hide-done', 'aria-pressed': String(listState.hideDone), onclick: () => { listState.hideDone = !listState.hideDone; listState.shown = PAGE; renderList(key); } }, listState.hideDone ? '✓ 완료 제외 중' : '완료 제외'),
       list, more));
   }
 

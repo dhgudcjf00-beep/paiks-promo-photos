@@ -544,3 +544,4 @@ a.uprow:active { opacity: 0.6; }
 .okmark .ck { width: 12px; height: 12px; margin: 0; }
 .pbar i { transition: width 1.1s cubic-bezier(0.2, 0.7, 0.2, 1); }
 @media (prefers-reduced-motion: reduce) { .ck path { animation: none; stroke-dashoffset: 0; } .pbar i { transition: none; } }
+.hidedone { margin: 12px 0 2px; }
