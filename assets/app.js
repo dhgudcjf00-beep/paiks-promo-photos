@@ -451,10 +451,10 @@
         ].filter(Boolean);
         if (tools.length) parts.push(h('div', { class: 'admin-tools' }, tools));
       } else {
-        parts.push(...mySummary());
         parts.push(h('div', { class: 'segs', role: 'group', 'aria-label': '팀 선택', style: '--n:1' },
-          h('a', { class: 'segb', href: '#/list/mine', 'aria-label': '내 담당 점포 목록 보기' }, '내 담당 점포')));
+          h('a', { class: 'segb ink', href: '#/list/mine', 'aria-label': '내 담당 점포 목록 보기' }, '내 담당 점포')));
         parts.push(h('p', { class: 'seg-note', text: '내 담당 점포를 확인하고 사진을 올려요' }));
+        parts.push(...mySummary());
         parts.push(h('button', { type: 'button', class: 'pill tourbtn', id: 'tour-home', onclick: () => startTour('home', HOME_STEPS) }, '사용 방법 보기'));
       }
       cardsHost.replaceChildren(...parts);
