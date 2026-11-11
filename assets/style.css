@@ -205,6 +205,16 @@ main { outline: none; padding-bottom: calc(40px + env(safe-area-inset-bottom, 0p
 
 /* 점포 화면: 항목마다 기존 사진 / 개선 사진 */
 .progress { margin: 8px 0 0; font-size: 14px; font-weight: 600; color: var(--muted); }
+.progrow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 8px; }
+.progrow .progress { margin: 0; }
+.upok { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 999px; background: var(--ink); color: #fff; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.upok[hidden] { display: none; }
+.mk.up { background: var(--ink); color: #fff; }
+.backna { margin-left: auto; display: inline-flex; align-items: center; gap: 7px; padding: 4px 2px; font-size: 13px; font-weight: 700; cursor: pointer; }
+.backna input { width: 20px; height: 20px; margin: 0; accent-color: #000; cursor: pointer; }
+.backna input:disabled { opacity: 0.5; cursor: default; }
+.cell.na { background: var(--soft); border: 1.5px dashed var(--line); box-sizing: border-box; }
+.cell.na b { font-size: 14px; font-weight: 700; color: var(--muted); }
 .sheet { margin-top: 10px; }
 .sheet-cols { display: none; }
 .grp h2 { margin: 26px 0 0; padding-bottom: 10px; font-size: 18px; font-weight: 800; letter-spacing: -0.02em; border-bottom: 1.5px solid var(--ink); }

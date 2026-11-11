@@ -21,6 +21,7 @@
     ] },
   ];
   const SLOT_TOTAL = SECTIONS.reduce((n, s) => n + s.items.length, 0); // 9
+  const ALL_SLOTS = SECTIONS.flatMap((sec) => sec.items.map((it) => it[0]));
   const NEED = SLOT_TOTAL - 1; // 후면은 해당하는 매장만 올리므로, 나머지 8곳이 다 차면 완료
 
   const $ = (sel, el = document) => el.querySelector(sel);
@@ -189,8 +190,16 @@
 
   const stat = (code) => {
     const v = data.status[code];
-    return { before: v ? Number(v[0]) || 0 : 0, after: v ? Number(v[1]) || 0 : 0, folder: v && v[3] ? v[3] : '', confirmed: !!(v && v[4]), improved: !!(v && v[5]), comments: v ? Number(v[6]) || 0 : 0 };
+    return { before: v ? Number(v[0]) || 0 : 0, after: v ? Number(v[1]) || 0 : 0, folder: v && v[3] ? v[3] : '', confirmed: !!(v && v[4]), improved: !!(v && v[5]), comments: v ? Number(v[6]) || 0 : 0, backNa: !!(v && v[7]), complete: !!(v && v[8]) };
   };
+  // 현황 한 칸: [기존수, 개선수, 시각, 폴더, 확인완료, 개선완료 직접, 코멘트수, 후면 미해당, 업로드 완료]
+  const mkStatus = (c) => { c = c || []; return [c[0] || 0, c[1] || 0, c[2] || '', c[3] || '', c[4] ? 1 : 0, c[5] ? 1 : 0, c[6] || 0, c[7] ? 1 : 0, c[8] ? 1 : 0]; };
+  // 업로드 완료: 9개 항목마다 기존·개선 사진이 다 있으면(후면은 '미해당'이면 건너뜀). 올린 사진 목록을 아직 못 받았으면 서버가 알려 준 값을 쓴다.
+  function completeOf(code, backNa, fallback) {
+    const b = book(code);
+    if (!b.loaded) return fallback ? 1 : 0;
+    return ALL_SLOTS.every((sl) => (sl === 'back' && backNa) || (b.before.some((e) => e.slot === sl) && b.after.some((e) => e.slot === sl))) ? 1 : 0;
+  }
 
   // ---------- 볼 수 있는 점포 ----------
   // 직원: 본인 담당 점포만. 관리자: 모든 팀(팀 칸에서 골라 들어간다).
@@ -281,6 +290,7 @@
       sub ? h('span', { class: 'sub', text: sub }) : null,
       h('span', { class: 'marks' },
         t.comments ? h('i', { class: 'mk cm', text: `코멘트 ${t.comments}` }) : null,
+        t.complete ? h('i', { class: 'mk up', text: '✓ 업로드 완료' }) : null,
         t.confirmed ? h('i', { class: 'mk on', text: '확인완료' }) : (t.improved ? h('i', { class: 'mk on', text: '개선완료' }) : null),
         h('i', { class: t.before >= NEED ? 'mk on' : 'mk', text: `기존 ${t.before}` }),
         h('i', { class: t.after >= NEED ? 'mk on' : 'mk', text: `개선 ${t.after}` }))));
@@ -662,12 +672,14 @@
   }
 
   // 점포 목록의 완료 표시에 쓰는 장수를 맞춘다
-  function recount(code, kind, replaced) {
+  function recount(code, kind, replaced, slot) {
     const b = book(code);
-    const cur = data.status[code] || [0, 0, '', '', 0, 0, 0];
-    const next = [cur[0] || 0, cur[1] || 0, new Date().toISOString(), cur[3] || '', cur[4] ? 1 : 0, cur[5] ? 1 : 0, cur[6] || 0];
+    const next = mkStatus(data.status[code]);
+    next[2] = new Date().toISOString();
     if (b.loaded) { next[0] = slotCount(b.before); next[1] = slotCount(b.after); }
     else if (!replaced) next[kind === 'before' ? 0 : 1] += 1;
+    if (slot === 'back' && next[7]) { next[7] = 0; if (!b.loaded) next[8] = 0; } // 후면 사진을 올리면 '후면 미해당' 표시는 풀린다(서버도 같이 푼다)
+    next[8] = completeOf(code, next[7], next[8]);
     data.status[code] = next;
     if (DEMO) ls.set('demo-status', JSON.stringify(data.status));
   }
@@ -684,6 +696,8 @@
     let notice = '';
     const sheetHost = h('div', {});
     const progress = h('p', { class: 'progress' });
+    const upok = h('span', { class: 'upok', hidden: true, role: 'status' }, '✓ 업로드 완료');
+    const progrow = h('div', { class: 'progrow' }, progress, upok);
 
     // 관리자 코멘트: 관리자는 쓰고 지울 수 있고, 그 점포를 맡은 SV는 읽기만 한다(서버도 같은 규칙으로 막는다). 개선 완료 버튼 바로 아래.
     const commentsHost = h('section', { class: 'cmbox', hidden: true, 'aria-label': '관리자 코멘트' });
@@ -695,8 +709,9 @@
       oninput: () => { cmCount.textContent = `${cmInput.value.length}/500`; } });
     const cmBtn = h('button', { type: 'button', class: 'btn primary cmpost', onclick: () => postComment() }, '코멘트 남기기');
     const bumpCommentCount = (n) => {
-      const c = data.status[code] || [0, 0, '', '', 0, 0, 0];
-      data.status[code] = [c[0] || 0, c[1] || 0, c[2] || '', c[3] || '', c[4] ? 1 : 0, c[5] ? 1 : 0, n];
+      const c = mkStatus(data.status[code]);
+      c[6] = n;
+      data.status[code] = c;
       if (!DEMO) ls.set('status-cache', JSON.stringify(data.status));
     };
     function paintComments() {
@@ -754,8 +769,7 @@
       const idx = kind === 'done' ? 5 : 4, what = kind === 'done' ? '개선 완료' : '확인완료';
       const was = !!(data.status[code] || [])[idx];
       const setLocal = (v) => {
-        const c = data.status[code] || [0, 0, '', '', 0, 0, 0];
-        const n = [c[0] || 0, c[1] || 0, c[2] || '', c[3] || '', c[4] ? 1 : 0, c[5] ? 1 : 0, c[6] || 0];
+        const n = mkStatus(data.status[code]);
         n[idx] = v ? 1 : 0;
         data.status[code] = n;
         if (DEMO) ls.set('demo-status', JSON.stringify(data.status)); else ls.set('status-cache', JSON.stringify(data.status));
@@ -776,6 +790,41 @@
       confirmBox.disabled = false; improveBtn.disabled = false;
     }
     const toggleConfirm = (on) => setFlag('confirmed', on, (was) => { confirmBox.checked = was; });
+
+    // 후면 미해당: 후면 사진이 없는 매장(출입문이 하나인 곳 등). 체크하면 후면은 올린 것으로 쳐서 업로드 완료·진행율에 들어간다.
+    let backBusy = false;
+    async function toggleBackNa(on) {
+      const was = stat(code).backNa;
+      const bk = book(code);
+      const hasBack = bk.before.some((e) => e.slot === 'back') || bk.after.some((e) => e.slot === 'back') || working.has('before:back') || working.has('after:back');
+      if (on && hasBack) { notice = '후면 사진이 이미 있어서 \'후면 미해당\'으로 표시할 수 없어요.'; paintTable(); return; }
+      const wasComplete = stat(code).complete;
+      const setLocal = (v) => {
+        const n = mkStatus(data.status[code]);
+        n[7] = v ? 1 : 0;
+        n[8] = completeOf(code, n[7], v ? n[8] : 0);
+        data.status[code] = n;
+        if (DEMO) ls.set('demo-status', JSON.stringify(data.status)); else ls.set('status-cache', JSON.stringify(data.status));
+      };
+      setLocal(on); progCache = null; notice = '';
+      const msg = on ? (stat(code).complete && !wasComplete ? ['✓ 업로드 완료', `${store.name} · 후면 미해당으로 표시했어요`] : ['후면 미해당으로 표시했어요', store.name]) : ['후면 미해당 표시를 풀었어요', store.name];
+      if (DEMO) { paintTable(); snack(msg[0], msg[1]); return; }
+      backBusy = true; paintTable();
+      try {
+        const r = await postJson({ action: 'back_na', store: code, name: store.name, on });
+        if (!r || !r.ok) throw fail((r && r.error) || 'back_na_failed');
+        snack(msg[0], msg[1]);
+      } catch (err) {
+        setLocal(was);
+        notice = err && err.code === 'bad_code' ? '접속 코드가 맞지 않아 저장하지 못했어요. 로그아웃한 뒤 코드를 다시 입력해 주세요.'
+          : (err && err.code === 'has_photo' ? '후면 사진이 이미 있어서 \'후면 미해당\'으로 표시할 수 없어요.' : '후면 미해당 표시를 저장하지 못했어요. 잠시 뒤 다시 눌러 주세요.');
+      }
+      backBusy = false; paintTable();
+    }
+    const backNaBox = () => h('label', { class: 'backna', for: 'backna-chk' },
+      h('input', { type: 'checkbox', id: 'backna-chk', checked: stat(code).backNa, disabled: backBusy, onchange: (e) => toggleBackNa(e.target.checked) }),
+      h('span', { text: '후면 미해당' }));
+    const naCell = (kind) => h('div', { class: 'cell na', 'aria-label': `후면 ${COL[kind]} 미해당` }, h('span', { class: 'fill' }, h('b', { text: '미해당' })));
 
     // 몇 곳만 개선하는 점포는 사진 항목이 다 채워지지 않아 개선중으로 남는다. 개선이 끝났으면 이 버튼으로 직접 개선완료로 올린다.
     const improveBtn = h('button', { type: 'button', class: 'improve', id: 'improve-btn', onclick: () => setFlag('done', !stat(code).improved, paintImprove) });
@@ -827,6 +876,13 @@
       const nb = b.loaded ? slotCount(b.before) : stat(code).before;
       const na = b.loaded ? slotCount(b.after) : stat(code).after;
       progress.textContent = `기존 사진 ${nb}/${SLOT_TOTAL} · 개선 사진 ${na}/${SLOT_TOTAL}`;
+      let ok = stat(code).complete;
+      if (b.loaded) { // 올린 사진 목록을 받았으면 지금 화면 기준으로 다시 계산하고, 기억해 둔 현황에도 맞춘다
+        const c = completeOf(code, stat(code).backNa, 0);
+        if (c !== (ok ? 1 : 0)) { const n = mkStatus(data.status[code]); n[8] = c; data.status[code] = n; if (!DEMO) ls.set('status-cache', JSON.stringify(data.status)); else ls.set('demo-status', JSON.stringify(data.status)); }
+        ok = !!c;
+      }
+      upok.hidden = !ok;
       sheetHost.replaceChildren(...[
         notice ? h('p', { class: 'form-note', role: 'alert', text: notice }) : null,
         b.loading ? h('div', { class: 'loadrow', role: 'status', 'aria-live': 'polite' }, spinnerSvg(22, 5), h('span', { text: '올린 사진을 불러오는 중이에요' })) : null,
@@ -835,9 +891,12 @@
           h('div', { class: 'sheet-cols', 'aria-hidden': 'true' }, h('span', { text: '항목' }), h('span', { text: COL.before }), h('span', { text: COL.after })),
           SECTIONS.map((sec) => h('section', { class: 'grp', 'aria-label': sec.title },
             h('h2', { text: sec.title }),
-            sec.items.map(([slot, label, desc]) => h('div', { class: 'srow' },
-              h('div', { class: 'lbl' }, h('b', { text: label }), desc ? h('small', { text: desc }) : null),
-              cell('before', slot, label), cell('after', slot, label))))))].filter(Boolean));
+            sec.items.map(([slot, label, desc]) => {
+              const isNa = slot === 'back' && stat(code).backNa;
+              return h('div', { class: isNa ? 'srow na' : 'srow' },
+                h('div', { class: 'lbl' }, h('b', { text: label }), desc ? h('small', { text: desc }) : null, slot === 'back' ? backNaBox() : null),
+                isNa ? naCell('before') : cell('before', slot, label), isNa ? naCell('after') : cell('after', slot, label));
+            }))))].filter(Boolean));
     }
 
     // 사진을 고르면 그 자리에 바로 올린다
@@ -857,7 +916,9 @@
           const res = await sendPhoto(store, kind, slot, file.name, blob, tiny);
           const replaced = await remember(store, kind, slot, blob, res || {}, tiny);
           URL.revokeObjectURL(st.url); working.delete(key);
-          recount(code, kind, replaced);
+          const wasComplete = stat(code).complete;
+          recount(code, kind, replaced, slot);
+          if (!wasComplete && stat(code).complete) justCompleted = store.name;
           justSaved.push({ label: slotLabel(slot), kind });
         });
         setTimeout(flushSaved, 60); // 줄 서 있던 사진까지 모두 끝났을 때 한 번만 알려 준다
@@ -874,7 +935,7 @@
         h('a', { class: 'back', href: nav.back, onclick: () => { if (nav.back === '#/') home.q = ''; } }, nav.back === '#/' ? '‹ 처음' : '‹ 목록'),
         h('h1', { class: 'store-name', text: store.name }),
         h('p', { class: 'sub', text: [store.team, store.sv && `${store.sv} 담당`].filter(Boolean).join(' ') }),
-        progress, confirmRow, improveBtn, commentsHost),
+        progrow, confirmRow, improveBtn, commentsHost),
       sheetHost)));
     // 작은 사진이 하나씩 도착할 때마다 표를 통째로 다시 그리지 않도록, 한 화면 프레임에 한 번만 그린다
     let paintQueued = false;
@@ -933,11 +994,13 @@
 
   // 저장이 끝난 사진을 모았다가, 올리기가 모두 끝나면 스낵바로 한 번 알린다
   const justSaved = [];
+  let justCompleted = ''; // 방금 올린 사진으로 모든 항목이 채워진 점포 이름
   const slotLabel = (slot) => { for (const sec of SECTIONS) for (const it of sec.items) if (it[0] === slot) return it[1]; return slot; };
   function flushSaved() {
     if (uploadQ.running || uploadQ.waiting.length || !justSaved.length) return;
     const n = justSaved.length, last = justSaved[n - 1];
     justSaved.length = 0;
+    if (justCompleted) { const nm = justCompleted; justCompleted = ''; snack('✓ 업로드 완료', `${nm}의 모든 항목이 올라갔어요`); return; }
     snack(n === 1 ? `${last.label} · ${COL[last.kind]}을 저장했어요` : `사진 ${n}장을 저장했어요`, '구글 드라이브에 올라갔어요');
   }
 
@@ -1062,6 +1125,8 @@
       if (e[3] === 'c') return ['확인완료', 'soft', '확인완료 표시 해제'];
       if (e[3] === 'M') return ['코멘트', 'line', '코멘트 작성'];
       if (e[3] === 'm') return ['코멘트', 'soft', '코멘트 삭제'];
+      if (e[3] === 'N') return ['후면 미해당', 'line', '후면 미해당으로 표시'];
+      if (e[3] === 'n') return ['후면 미해당', 'soft', '후면 미해당 표시 해제'];
       if (e[3] === 'I') return ['개선 완료', 'line', '"개선 완료" 버튼 누름'];
       return ['개선 완료', 'soft', '"개선 완료" 취소'];
     };
