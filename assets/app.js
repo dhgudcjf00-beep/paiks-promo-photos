@@ -866,8 +866,9 @@
         cmState.list = cmState.list.filter((x) => x.id !== c.id); bumpCommentCount(cmState.list.length); paintComments(); snack('코멘트를 삭제했어요', store.name);
       } catch { cmErr.textContent = '코멘트를 삭제하지 못했어요. 잠시 뒤 다시 눌러 주세요.'; cmErr.hidden = false; }
     }
-    commentsHost.append(h('h2', { class: 'cmtitle', text: '관리자 코멘트' }), cmList,
-      isManager() ? h('div', { class: 'cmform' }, cmInput, h('div', { class: 'cmrow' }, cmCount, cmBtn), cmErr) : null);
+    // 비어 있는 값(null)을 그대로 넘기면 화면에 "null" 글자가 찍히므로 걸러서 넘긴다(SV는 쓰기 칸이 없다)
+    commentsHost.append(...[h('h2', { class: 'cmtitle', text: '관리자 코멘트' }), cmList,
+      isManager() ? h('div', { class: 'cmform' }, cmInput, h('div', { class: 'cmrow' }, cmCount, cmBtn), cmErr) : null].filter(Boolean));
     // 확인완료: 사진을 올리지 않아도 개선이 끝났거나, 개선할 점이 없는 점포. 체크하면 팀별 진행율에서 미진행으로 세지 않는다.
     const confirmBox = h('input', { type: 'checkbox', id: 'confirm-chk', checked: stat(code).confirmed,
       onchange: (e) => toggleConfirm(e.target.checked) });
