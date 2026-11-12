@@ -194,10 +194,10 @@
 
   const stat = (code) => {
     const v = data.status[code];
-    return { before: v ? Number(v[0]) || 0 : 0, after: v ? Number(v[1]) || 0 : 0, folder: v && v[3] ? v[3] : '', confirmed: !!(v && v[4]), improved: !!(v && v[5]), comments: v ? Number(v[6]) || 0 : 0, backNa: !!(v && v[7]), complete: !!(v && v[8]) };
+    return { before: v ? Number(v[0]) || 0 : 0, after: v ? Number(v[1]) || 0 : 0, folder: v && v[3] ? v[3] : '', confirmed: !!(v && v[4]), improved: !!(v && v[5]), comments: v ? Number(v[6]) || 0 : 0, backNa: !!(v && v[7]), complete: !!(v && v[8]), cmAdmin: v ? (v[9] !== undefined ? Number(v[9]) || 0 : Number(v[6]) || 0) : 0 };
   };
-  // 현황 한 칸: [기존수, 개선수, 시각, 폴더, 확인완료, 개선완료 직접, 코멘트수, 후면 미해당, 업로드 완료]
-  const mkStatus = (c) => { c = c || []; return [c[0] || 0, c[1] || 0, c[2] || '', c[3] || '', c[4] ? 1 : 0, c[5] ? 1 : 0, c[6] || 0, c[7] ? 1 : 0, c[8] ? 1 : 0]; };
+  // 현황 한 칸: [기존수, 개선수, 시각, 폴더, 확인완료, 개선완료 직접, 코멘트수, 후면 미해당, 업로드 완료, 관리자가 쓴 코멘트수]
+  const mkStatus = (c) => { c = c || []; return [c[0] || 0, c[1] || 0, c[2] || '', c[3] || '', c[4] ? 1 : 0, c[5] ? 1 : 0, c[6] || 0, c[7] ? 1 : 0, c[8] ? 1 : 0, c[9] || 0]; };
   // 업로드 완료: 9개 항목마다 기존·개선 사진이 다 있으면(후면은 '미해당'이면 건너뜀). 올린 사진 목록을 아직 못 받았으면 서버가 알려 준 값을 쓴다.
   function completeOf(code, backNa, fallback) {
     const b = book(code);
@@ -208,7 +208,7 @@
   // 관리자 코멘트를 읽었는지(이 기기에서): 점포별로 마지막에 본 코멘트 수를 기억한다. 그보다 늘어나 있으면 SV 화면에 "새 코멘트"로 알려 준다.
   const seenCm = () => { try { return JSON.parse(ls.get('cm-seen', '{}')) || {}; } catch { return {}; } };
   const markCmSeen = (code, n) => { const m = seenCm(); if ((m[code] || 0) === n) return; m[code] = n; ls.set('cm-seen', JSON.stringify(m)); };
-  const hasNewCm = (code) => !!me && me.role !== '관리자' && stat(code).comments > (seenCm()[code] || 0);
+  const hasNewCm = (code) => !!me && me.role !== '관리자' && stat(code).cmAdmin > (seenCm()[code] || 0);
 
   // ---------- 볼 수 있는 점포 ----------
   // 직원: 본인 담당 점포만. 관리자: 모든 팀(팀 칸에서 골라 들어간다).
@@ -444,6 +444,8 @@
         const tools = [
           data.links.sheet ? externalLink('취합 시트 열기', data.links.sheet) : null,
           data.links.folder ? externalLink('드라이브 폴더 열기', data.links.folder) : null,
+          me.team ? h('a', { class: 'pill dark', id: 'myteam-link', href: '#/myteam' },
+            h('span', { 'aria-hidden': 'true', html: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>' }), '내 팀 완료매장 보기') : null,
           canLog() ? h('a', { class: 'pill dark', href: '#/log' },
             h('span', { 'aria-hidden': 'true', html: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3z"/></svg>' }), '로그인 기록') : null,
           canLog() ? h('a', { class: 'pill dark', href: '#/activity' },
@@ -807,30 +809,29 @@
     const okmark = h('span', { class: 'okmark', hidden: true, title: '업로드 완료' }, ckIcon());
     const progrow = h('div', { class: 'progrow' }, progress, upok);
 
-    // 관리자 코멘트: 관리자는 쓰고 지울 수 있고, 그 점포를 맡은 SV는 읽기만 한다(서버도 같은 규칙으로 막는다). 개선 완료 버튼 바로 아래.
-    const commentsHost = h('section', { class: 'cmbox', hidden: true, 'aria-label': '관리자 코멘트' });
+    // 코멘트: 관리자도, 그 점포를 맡은 SV도 쓴다(SV 것은 "담당자" 메모로 표시되고 관리자도 본다). 관리자는 어느 것이든, SV는 자기가 쓴 것만 지운다(서버도 같은 규칙). 개선 완료 버튼 바로 아래.
+    const commentsHost = h('section', { class: 'cmbox', hidden: true, 'aria-label': '코멘트' });
     const cmState = { list: [], canWrite: isManager() };
     const cmList = h('ul', { class: 'cmlist' });
     const cmErr = h('p', { class: 'form-note', role: 'alert', hidden: true });
     const cmCount = h('small', { class: 'cmcount', text: '0/500' });
-    const cmInput = h('textarea', { class: 'cminput', rows: '3', maxlength: '500', placeholder: '이 매장에 남길 코멘트 (담당 SV에게도 보여요)', 'aria-label': '코멘트 입력',
+    const cmInput = h('textarea', { class: 'cminput', rows: '3', maxlength: '500', placeholder: isManager() ? '이 매장에 남길 코멘트 (담당 SV에게도 보여요)' : '특이사항 메모 (관리자도 볼 수 있어요)', 'aria-label': '코멘트 입력',
       oninput: () => { cmCount.textContent = `${cmInput.value.length}/500`; } });
-    const cmBtn = h('button', { type: 'button', class: 'btn primary cmpost', onclick: () => postComment() }, '코멘트 남기기');
-    const bumpCommentCount = (n) => {
-      const c = mkStatus(data.status[code]);
-      c[6] = n;
+    const cmBtn = h('button', { type: 'button', class: 'btn primary cmpost', onclick: () => postComment() }, isManager() ? '코멘트 남기기' : '메모 남기기');
+    const bumpCommentCount = () => { // 목록에 보이는 코멘트로 현황의 코멘트 수(전체·관리자가 쓴 수)를 맞추고, 읽은 것으로 기억한다
+      const c = mkStatus(data.status[code]), n = cmState.list.length, na = cmState.list.filter((x) => (x.role || '관리자') === '관리자').length;
+      c[6] = n; c[9] = na;
       data.status[code] = c;
-      markCmSeen(code, n);
+      markCmSeen(code, na);
       if (!DEMO) ls.set('status-cache', JSON.stringify(data.status));
     };
     function paintComments() {
       if (DEMO) return;
       const items = cmState.list;
-      if (!cmState.canWrite && !items.length) { commentsHost.hidden = true; return; } // SV는 코멘트가 있을 때만 이 칸이 보인다
       commentsHost.hidden = false;
       cmList.replaceChildren(...(items.length ? items.map((c) => h('li', { class: 'cmitem' },
-        h('div', { class: 'cmmeta' }, h('b', { text: c.who }), h('span', { text: fmtDate(new Date(c.t).toISOString()) }),
-          cmState.canWrite ? h('button', { type: 'button', class: 'cmdel', 'aria-label': `${c.who}의 코멘트 삭제`, onclick: () => delComment(c) }, '삭제') : null),
+        h('div', { class: 'cmmeta' }, h('b', { text: c.who }), h('i', { class: (c.role || '관리자') === '담당자' ? 'cmrole sv' : 'cmrole adm', text: c.role || '관리자' }), h('span', { text: fmtDate(new Date(c.t).toISOString()) }),
+          (isManager() || (me && c.who === me.name)) ? h('button', { type: 'button', class: 'cmdel', 'aria-label': `${c.who}의 코멘트 삭제`, onclick: () => delComment(c) }, '삭제') : null),
         h('p', { class: 'cmtext', text: c.text }))) : [h('li', { class: 'cmempty', text: '아직 코멘트가 없어요.' })]));
     }
     async function loadComments() {
@@ -853,7 +854,7 @@
         cmState.list.unshift(r.comment); cmInput.value = ''; cmCount.textContent = '0/500';
         bumpCommentCount(cmState.list.length); paintComments(); snack('코멘트를 남겼어요', store.name);
       } catch (err) {
-        cmErr.textContent = { too_long: '코멘트는 500자까지 쓸 수 있어요.', limit: '이 매장에는 코멘트를 더 남길 수 없어요(100건까지).', bad_code: '접속 코드가 맞지 않아 저장하지 못했어요. 로그아웃한 뒤 코드를 다시 입력해 주세요.', not_allowed: '관리자만 코멘트를 남길 수 있어요.' }[err && err.code] || '코멘트를 저장하지 못했어요. 잠시 뒤 다시 눌러 주세요.';
+        cmErr.textContent = { too_long: '코멘트는 500자까지 쓸 수 있어요.', limit: '이 매장에는 코멘트를 더 남길 수 없어요(100건까지).', bad_code: '접속 코드가 맞지 않아 저장하지 못했어요. 로그아웃한 뒤 코드를 다시 입력해 주세요.', not_allowed: '이 매장에는 코멘트를 남길 수 없어요.' }[err && err.code] || '코멘트를 저장하지 못했어요. 잠시 뒤 다시 눌러 주세요.';
         cmErr.hidden = false;
       }
       cmBtn.disabled = false;
@@ -866,9 +867,7 @@
         cmState.list = cmState.list.filter((x) => x.id !== c.id); bumpCommentCount(cmState.list.length); paintComments(); snack('코멘트를 삭제했어요', store.name);
       } catch { cmErr.textContent = '코멘트를 삭제하지 못했어요. 잠시 뒤 다시 눌러 주세요.'; cmErr.hidden = false; }
     }
-    // 비어 있는 값(null)을 그대로 넘기면 화면에 "null" 글자가 찍히므로 걸러서 넘긴다(SV는 쓰기 칸이 없다)
-    commentsHost.append(...[h('h2', { class: 'cmtitle', text: '관리자 코멘트' }), cmList,
-      isManager() ? h('div', { class: 'cmform' }, cmInput, h('div', { class: 'cmrow' }, cmCount, cmBtn), cmErr) : null].filter(Boolean));
+    commentsHost.append(h('h2', { class: 'cmtitle', text: '코멘트' }), cmList, h('div', { class: 'cmform' }, cmInput, h('div', { class: 'cmrow' }, cmCount, cmBtn), cmErr));
     // 확인완료: 사진을 올리지 않아도 개선이 끝났거나, 개선할 점이 없는 점포. 체크하면 팀별 진행율에서 미진행으로 세지 않는다.
     const confirmBox = h('input', { type: 'checkbox', id: 'confirm-chk', checked: stat(code).confirmed,
       onchange: (e) => toggleConfirm(e.target.checked) });
@@ -1382,7 +1381,7 @@
     requestAnimationFrame(step);
   }
 
-  // 관리자: SV별 진행율(완료 = 개선완료 + 확인완료). 진행이 느린 순이나 팀·이름 순으로 보고, 줄을 누르면 그 SV의 점포를 검색해 준다.
+  // 관리자: SV별 진행율(완료 = 개선완료 + 확인완료). 진행이 느린 순·빠른 순이나 팀·이름 순으로 보고, 줄을 누르면 그 SV의 점포를 검색해 준다.
   const svState = { sort: 'slow', team: '전체' };
   function svSection(svs) {
     const host = h('section', { class: 'svsec', 'aria-label': 'SV별 진행율' });
@@ -1397,18 +1396,34 @@
     function paint() {
       const list = svs.filter((o) => svState.team === '전체' || o.team === svState.team)
         .sort(svState.sort === 'slow' ? (a, b) => rate(a) - rate(b) || a.sv.localeCompare(b.sv, 'ko')
-          : (a, b) => a.team.localeCompare(b.team, 'ko', { numeric: true }) || a.sv.localeCompare(b.sv, 'ko'));
+          : (svState.sort === 'fast' ? (a, b) => rate(b) - rate(a) || finished(b) - finished(a) || a.sv.localeCompare(b.sv, 'ko')
+            : (a, b) => a.team.localeCompare(b.team, 'ko', { numeric: true }) || a.sv.localeCompare(b.sv, 'ko')));
       host.replaceChildren(
         h('div', { class: 'svhead' }, h('h2', { text: 'SV별 진행율' }), h('span', { class: 'ptotal', text: `${list.length}명` })),
         h('div', { class: 'segs inline', role: 'group', 'aria-label': '팀 고르기', style: `--n:${teams.length}` },
           teams.map((n) => h('button', { type: 'button', class: n === svState.team ? 'segb on' : 'segb', 'aria-pressed': String(n === svState.team), onclick: () => { svState.team = n; paint(); } }, n))),
-        h('div', { class: 'segs inline', role: 'group', 'aria-label': '정렬', style: '--n:2' },
-          [['slow', '진행 느린 순'], ['team', '팀·이름 순']].map(([k, t]) => h('button', { type: 'button', class: svState.sort === k ? 'segb on' : 'segb', 'aria-pressed': String(svState.sort === k), onclick: () => { svState.sort = k; paint(); } }, t))),
+        h('div', { class: 'segs inline', role: 'group', 'aria-label': '정렬', style: '--n:3' },
+          [['slow', '진행 느린 순'], ['fast', '진행 빠른 순'], ['team', '팀·이름 순']].map(([k, t]) => h('button', { type: 'button', class: svState.sort === k ? 'segb on' : 'segb', 'aria-pressed': String(svState.sort === k), onclick: () => { svState.sort = k; paint(); } }, t))),
         h('ul', { class: 'svlist' }, list.length ? list.map(svRow) : h('li', { class: 'empty', text: '해당하는 SV가 없어요.' })));
     }
     paint();
     return host;
   }
+
+  // 진행율 카드 한 장(전체·팀 공통). linkTeam 은 항목을 눌렀을 때 볼 목록의 팀(안 주면 전체 카드는 전체, 팀 카드는 그 팀)
+  const progCard = (title, o, big, linkTeam) => h('section', { class: big ? 'pcard big' : 'pcard', 'aria-label': `${title} 진행율` },
+    h('div', { class: 'phead' }, h('h2', { text: title }), h('span', { class: 'ptotal', text: `전체 ${o.total}곳` })),
+    // 막대는 끝난 것(확인완료·개선완료)이 왼쪽 맨 앞부터 채워지고 남은 것이 오른쪽에 남는다: 진행율이 오르면 막대가 왼쪽에서 차오른다
+    h('div', { class: 'pbar', role: 'img', 'aria-label': PROG_KINDS.map(([k, t]) => `${t} ${o[k]}곳`).join(', ') },
+      PROG_BAR.map((k) => h('i', { class: `s-${k}`, style: `width:${o.total ? (o[k] / o.total) * 100 : 0}%` }))),
+    // 항목을 누르면 그 팀의 그 상태인 매장 목록이 나온다
+    h('ul', { class: 'plist' }, PROG_KINDS.map(([k, t]) => h('li', {},
+      h('a', { class: 'plink', href: progHref(linkTeam || (big ? 'all' : title), k), 'aria-label': `${title} ${t} ${o[k]}곳, 매장 목록 보기` },
+        h('i', { class: `sw s-${k}`, 'aria-hidden': 'true' }),
+        h('span', { class: 'pl', text: t }),
+        h('span', { class: 'pn', 'data-n': String(o[k]), text: `${o[k]}곳` }),
+        h('span', { class: 'pp', 'data-n': String(o[k]), 'data-t': String(o.total), text: pctText(o[k], o.total) }),
+        h('span', { class: 'go', 'aria-hidden': 'true', text: '›' }))))));
 
   async function renderProgress() {
     document.title = '팀별 진행율 | 빽다방 홍보물 취합';
@@ -1424,19 +1439,7 @@
     if (token !== progToken) return;
     if (!json.ok) { shell(h('p', { class: 'empty', text: json.error === 'not_allowed' ? '팀별 진행율은 관리자 계정에서만 볼 수 있어요.' : '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
 
-    const card = (title, o, big) => h('section', { class: big ? 'pcard big' : 'pcard', 'aria-label': `${title} 진행율` },
-      h('div', { class: 'phead' }, h('h2', { text: title }), h('span', { class: 'ptotal', text: `전체 ${o.total}곳` })),
-      // 막대는 끝난 것(확인완료·개선완료)이 왼쪽 맨 앞부터 채워지고 남은 것이 오른쪽에 남는다: 진행율이 오르면 막대가 왼쪽에서 차오른다
-      h('div', { class: 'pbar', role: 'img', 'aria-label': PROG_KINDS.map(([k, t]) => `${t} ${o[k]}곳`).join(', ') },
-        PROG_BAR.map((k) => h('i', { class: `s-${k}`, style: `width:${o.total ? (o[k] / o.total) * 100 : 0}%` }))),
-      // 항목을 누르면 그 팀의 그 상태인 매장 목록이 나온다
-      h('ul', { class: 'plist' }, PROG_KINDS.map(([k, t]) => h('li', {},
-        h('a', { class: 'plink', href: progHref(big ? 'all' : title, k), 'aria-label': `${title} ${t} ${o[k]}곳, 매장 목록 보기` },
-          h('i', { class: `sw s-${k}`, 'aria-hidden': 'true' }),
-          h('span', { class: 'pl', text: t }),
-          h('span', { class: 'pn', 'data-n': String(o[k]), text: `${o[k]}곳` }),
-          h('span', { class: 'pp', 'data-n': String(o[k]), 'data-t': String(o.total), text: pctText(o[k], o.total) }),
-          h('span', { class: 'go', 'aria-hidden': 'true', text: '›' }))))));
+    const card = progCard;
 
     shell(
       h('div', { class: 'pmeta' },
@@ -1452,6 +1455,47 @@
         h('p', { class: 'fine' }, h('b', { text: '확인완료 ' }), '매장 화면에서 확인완료로 체크한 매장(사진이 없어도 미진행으로 세지 않아요)'),
         h('p', { class: 'fine', text: '모든 항목에 사진이 꼭 있어야 하는 것은 아니라서, 올라와 있는 항목끼리만 맞춰 봐요.' }),
         h('p', { class: 'fine', text: '각 항목을 누르면 그 팀의 해당 매장 목록을 볼 수 있어요.' })));
+    runCountUp();
+  }
+
+  // ---------- 내 팀 완료매장 보기(모든 관리자) ----------
+  // 맨 위에 내 팀의 진행율(팀별 진행율 화면의 카드와 같은 모양), 아래에 내 팀의 완료 매장(개선완료 + 확인완료) 목록.
+  const myTeamState = { shown: PAGE };
+  async function renderMyTeam() {
+    const team = me && me.team;
+    document.title = `${team || '내 팀'} 완료 매장 | 빽다방 홍보물 취합`;
+    const token = ++progToken;
+    const back = h('a', { class: 'back', href: '#/', onclick: () => { home.q = ''; } }, '‹ 처음');
+    const shell = (...kids) => { if (token === progToken) view.replaceChildren(h('div', { class: 'wrap' }, back, h('h1', { class: 'page-title', text: `${team || '내 팀'} 완료 매장` }), ...kids)); };
+    if (!isManager()) { shell(h('p', { class: 'empty', text: '내 팀 완료매장 보기는 관리자 계정에서만 볼 수 있어요.' })); return; }
+    if (DEMO) { shell(h('p', { class: 'empty', text: '시험 모드에서는 볼 수 없어요.' })); return; }
+    if (!team) { shell(h('p', { class: 'empty', text: '내 팀이 정해져 있지 않아요. 취합 시트의 직원 명단에서 팀을 확인해 주세요.' })); return; }
+    shell(loadingBlock('내 팀 진행율을 불러오는 중이에요'));
+    let json;
+    try { json = await loadProgress(true); }
+    catch { shell(h('p', { class: 'empty', text: '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
+    if (token !== progToken) return;
+    if (!json.ok) { shell(h('p', { class: 'empty', text: '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
+    const o = (json.teams || []).find((t) => t.team === team);
+    if (!o) { shell(h('p', { class: 'empty', text: `${team} 점포를 찾지 못했어요.` })); return; }
+    const kinds = json.kinds || {};
+    const pool = data.stores.filter((st) => st.team === team && (kinds[st.code] === 'done' || kinds[st.code] === 'confirmed')).sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+    const list = h('ul', { class: 'rows' });
+    if (!pool.length) list.append(h('li', { class: 'empty', text: '아직 완료한 점포가 없어요.' }));
+    pool.slice(0, myTeamState.shown).forEach((st) => list.append(row(st, false)));
+    const more = pool.length > myTeamState.shown
+      ? h('button', { type: 'button', class: 'btn ghost block more', onclick: () => { myTeamState.shown += PAGE; renderMyTeam(); } }, `더 보기 (${pool.length - myTeamState.shown}곳 남음)`)
+      : null;
+    shell(
+      h('div', { class: 'pmeta' },
+        h('p', { class: 'meta-line', text: `기준 ${fmtDate(json.at)} · ${team} ${o.total}곳` }),
+        h('button', { type: 'button', class: 'pill', onclick: () => renderMyTeam() }, '새로고침')),
+      progCard(team, o, true, team),
+      h('div', { class: 'titlerow mt' },
+        h('h2', { class: 'subtitle', text: `완료 매장 ${pool.length}곳` }),
+        h('a', { class: 'pill', href: `#/list/${enc(team)}` }, '팀 전체 매장 보기', h('span', { 'aria-hidden': 'true', text: '›' }))),
+      h('p', { class: 'fine', text: '개선완료와 확인완료 점포예요. 점포를 누르면 사진과 코멘트를 볼 수 있어요.' }),
+      list, more);
     runCountUp();
   }
 
@@ -1509,6 +1553,7 @@
     m = hash.match(/^#\/progress\/([^/]+)\/([a-z]+)$/);
     if (m) { renderProgressList(decodeURIComponent(m[1]), m[2]); window.scrollTo(0, 0); return; }
     if (hash === '#/log') { renderLog(); window.scrollTo(0, 0); return; }
+    if (hash === '#/myteam') { nav.back = hash; myTeamState.shown = PAGE; renderMyTeam(); window.scrollTo(0, 0); return; }
     if (hash === '#/activity') { renderActivity(); window.scrollTo(0, 0); return; }
     m = hash.match(/^#\/list\/(.+)$/);
     if (m) { nav.back = hash; renderList(decodeURIComponent(m[1])); } else { nav.back = '#/'; renderHome(); }
