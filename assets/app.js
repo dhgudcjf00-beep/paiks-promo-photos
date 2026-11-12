@@ -1282,10 +1282,12 @@
     if (!canLog()) { denied(); return; }
     shell(loadingBlock('활동 기록을 불러오는 중이에요'));
     let json;
-    try { json = await getJson({ action: 'activity' }); }
+    try { json = await getJson({ action: 'activity', v: '2' }); }
     catch { shell(h('p', { class: 'empty', text: '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
     if (token !== actToken) return;
     if (!json.ok) { if (json.error === 'not_allowed') denied(); else shell(h('p', { class: 'empty', text: '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
+    // 서버가 점포·사람 이름을 한 번만 담은 압축 모양(v2)으로 보내 준다: 예전 한 줄 모양 [시각(ms), 점포 식별값, 점포명, 종류, 항목, 한 사람, 교체]으로 펼친다
+    if (json.v === 2) json.rows = json.rows.map((r) => [r[0] * 1000, json.stores[r[1]][0], json.stores[r[1]][1], r[2], r[3], json.users[r[4]], r[5]]);
 
     let filter = '전체', q = '', shown = LOG_PAGE;
     const slotText = (slot) => (slot ? slotLabel(slot) : '항목 미상');
@@ -1341,7 +1343,7 @@
       h('div', { class: 'stats' }, stat('오늘 활동', json.stats.today), stat('최근 7일', json.stats.week), stat('오늘 한 사람', json.stats.people)),
       h('label', { class: 'upsearchwrap' }, input),
       segs, listHost,
-      h('p', { class: 'fine', text: `이 기록은 구글 시트·드라이브·깃허브에 남기지 않고 서버 안에만 최근 ${json.keep || 1500}건까지 보관해요. "사진"은 사진 올림·교체, "표시"는 확인완료와 "개선 완료" 버튼이에요.` }));
+      h('p', { class: 'fine', text: `이 기록은 구글 시트·드라이브·깃허브에 남기지 않고 서버 안에만 최근 ${json.days || 7}일치를 보관해요. "사진"은 사진 올림·교체, "표시"는 확인완료와 "개선 완료" 버튼이에요.` }));
     paintList();
   }
   // ---------- 팀별 진행율 (관리자) ----------
