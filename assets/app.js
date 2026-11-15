@@ -84,11 +84,21 @@
 
   function fail(code, msg) { return Object.assign(new Error(msg || code), { code }); }
 
-  // 구글 앱스 스크립트에 묻기 (접속 코드를 항상 함께 보낸다)
+  // 구글 앱스 스크립트에 묻기 (접속 코드를 항상 함께 보낸다).
+  // 구글이 한꺼번에 몰려서 거절하거나 연결이 잠깐 끊기면, 점점 길게(0.7초, 1.4초, 조금씩 어긋나게) 쉬며 최대 3번까지 다시 묻는다. 읽기 전용이라 여러 번 물어도 안전하다.
+  // 접속 코드가 틀린 것처럼 구글이 정상적으로 답한 거절은 다시 묻지 않는다.
   async function getJson(params) {
     const q = new URLSearchParams({ code: ls.get('accessCode'), ...params });
-    const res = await fetch(`${cfg.endpoint}?${q}`);
-    return res.json();
+    let lastErr;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const res = await fetch(`${cfg.endpoint}?${q}`);
+        return await res.json();
+      } catch (err) { lastErr = err; }
+      if (attempt < 2 && navigator.onLine !== false) await new Promise((r) => setTimeout(r, 700 * 2 ** attempt + Math.random() * 400));
+      else break;
+    }
+    throw lastErr;
   }
 
   // ---------- 접속 IP (로그인 기록용) ----------
@@ -166,7 +176,11 @@
   // ---------- 첫 화면: 저장해 둔 내용을 먼저 보여주고, 뒤에서 새로 받는다 ----------
   // 점포 목록과 현황을 한 번에 받는다. 서버가 아직 옛 버전이면 둘로 나눠 받는다.
   async function fetchInit() {
-    let json = await getJson({ action: 'init' });
+    let json = null;
+    const early = window.__initP, earlyCode = window.__initCode;
+    window.__initP = null; // 한 번만 쓴다
+    if (early && earlyCode === ls.get('accessCode')) { try { json = await early; } catch { json = null; } } // 미리 보내 둔 첫 요청(실패하면 아래에서 다시 묻는다)
+    if (!json) json = await getJson({ action: 'init' });
     if (!json.ok && json.error === 'unknown_action') {
       json = await getJson({ action: 'stores' });
       if (json.ok) { const s = await getJson({ action: 'status' }); json.status = s.ok ? s.status : {}; }
@@ -1181,7 +1195,7 @@
     };
     let lastErr;
     // 구글은 동시에 너무 많은 요청이 오면 일부를 거절한다. 그럴 때는 잠깐씩 점점 더 쉬었다가(1, 2, 4, 8초, 조금씩 어긋나게) 다시 보낸다.
-    for (let attempt = 0; attempt < 5; attempt += 1) {
+    for (let attempt = 0; attempt < 6; attempt += 1) {
       try {
         // text/plain 으로 보내면 브라우저 사전 확인 요청 없이 앱스 스크립트가 받는다
         const res = await fetch(cfg.endpoint, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) });
@@ -1190,7 +1204,7 @@
         lastErr = fail(json.error || 'upload_failed');
         if (NO_RETRY.has(json.error)) throw lastErr; // 다시 해도 소용없는 거절은 바로 알린다
       } catch (err) { lastErr = err; if (NO_RETRY.has(err.code)) throw err; }
-      await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt + Math.random() * 600));
+      if (attempt < 5) await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt + Math.random() * 600));
     }
     throw lastErr;
   }
