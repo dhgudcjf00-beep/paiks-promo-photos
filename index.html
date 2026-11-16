@@ -11,7 +11,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;800&display=swap">
-<link rel="stylesheet" href="assets/style.css?v=24">
+<link rel="stylesheet" href="assets/style.css?v=25">
 </head>
 <body>
 <header class="top">
@@ -24,6 +24,6 @@
 // 저장된 로그인이 있으면 app.js 를 받는 동안 미리 점포 목록·현황을 요청해 둔다(app.js 가 같은 코드일 때만 이어받는다)
 (function () { try { var c = localStorage.getItem('accessCode'), u = window.APP_CONFIG && window.APP_CONFIG.endpoint; if (c && u) { window.__initCode = c; window.__initP = fetch(u + '?' + new URLSearchParams({ code: c, action: 'init' })).then(function (r) { return r.json(); }); window.__initP.catch(function () {}); } } catch (e) {} })();
 </script>
-<script src="assets/app.js?v=24"></script>
+<script src="assets/app.js?v=25"></script>
 </body>
 </html>
