@@ -26,6 +26,7 @@
   const CK_SVG = '<svg class="ckd" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3.2 8.6l3.1 3.1 6.5-6.7" pathLength="1"/></svg>';
   const ckIcon = () => h('span', { class: 'ckw', 'aria-hidden': 'true', html: CK_SVG });
   const ALL_SLOTS = SECTIONS.flatMap((sec) => sec.items.map((it) => it[0]));
+  const DEADLINE = { date: '2027.01.15', label: '2027년 1월 2주차' }; // 취합 마감 기한(첫 화면에 보여 준다)
   const NEED = SLOT_TOTAL - 1; // 후면은 해당하는 매장만 올리므로, 나머지 8곳이 다 차면 완료
 
   const $ = (sel, el = document) => el.querySelector(sel);
@@ -500,6 +501,7 @@
     view.replaceChildren(h('div', { class: 'wrap' },
       h('section', { class: 'hero' },
         h('h1', { text: '홍보물 사진 업로드' }),
+        h('p', { class: 'deadline' }, h('b', { text: '취합 마감' }), h('span', { text: `${DEADLINE.date} · ${DEADLINE.label}` })),
         h('label', { class: 'search' }, input, clear)),
       cardsHost, resultsHost));
     paintCards();
