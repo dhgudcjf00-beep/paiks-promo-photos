@@ -89,17 +89,23 @@
   // 구글이 한꺼번에 몰려서 거절하거나 연결이 잠깐 끊기면, 점점 길게(0.7초, 1.4초, 조금씩 어긋나게) 쉬며 최대 3번까지 다시 묻는다. 읽기 전용이라 여러 번 물어도 안전하다.
   // 접속 코드가 틀린 것처럼 구글이 정상적으로 답한 거절은 다시 묻지 않는다.
   async function getJson(params) {
-    const q = new URLSearchParams({ code: ls.get('accessCode'), ...params });
-    let lastErr;
+    const q = new URLSearchParams({ code: reqCode(), ...params });
+    const gen = startGen; // 기다리는 사이 계정이 바뀌면(다시 로그인·다른 창 따라가기) 응답 대신 'stale' 로 끝낸다: 이전 계정 화면의 뒤처리가 새 계정 상태를 건드리지 않게
+    let lastErr, json;
     for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (gen !== startGen) break; // 쉬는 사이 계정이 바뀌었으면 이전 코드로 다시 묻지 않는다
       try {
         const res = await fetch(`${cfg.endpoint}?${q}`);
-        return await res.json();
+        json = await res.json();
+        break;
       } catch (err) { lastErr = err; }
+      if (gen !== startGen) break;
       if (attempt < 2 && navigator.onLine !== false) await new Promise((r) => setTimeout(r, 700 * 2 ** attempt + Math.random() * 400));
       else break;
     }
-    throw lastErr;
+    if (gen !== startGen) throw fail('stale');
+    if (json === undefined) throw lastErr;
+    return json;
   }
 
   // ---------- 접속 IP (로그인 기록용) ----------
@@ -124,15 +130,22 @@
   // 로그인 기록 남기기. 화면을 기다리게 하지 않고, 실패해도 조용히 넘어간다.
   async function trackLogin(via) {
     if (DEMO) return;
+    const code = reqCode(); // IP를 기다리는 사이 다른 창에서 코드가 바뀌어도 로그인한 그 코드로 남긴다
     const info = await lookupIp();
     if (!info) return;
-    try { await getJson({ action: 'track', via, ip: info.ip }); } catch { /* 무시 */ }
+    try { await getJson({ action: 'track', via, ip: info.ip, code }); } catch { /* 무시 */ }
   }
 
   // 구글 스크립트로 값을 보낸다(사진처럼 큰 값은 주소가 아니라 본문에 담는다)
   async function postJson(payload) {
-    const res = await fetch(cfg.endpoint, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ code: ls.get('accessCode'), ...payload }) });
-    return res.json();
+    const gen = startGen; // getJson 과 같은 이유로, 계정이 바뀐 뒤 끝난 요청은 성공·실패 모두 'stale' 로 끝낸다(부르는 쪽은 되돌리기를 하지 않는다)
+    let json;
+    try {
+      const res = await fetch(cfg.endpoint, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ code: reqCode(), ...payload }) });
+      json = await res.json();
+    } catch (err) { if (gen !== startGen) throw fail('stale'); throw err; }
+    if (gen !== startGen) throw fail('stale');
+    return json;
   }
 
   // 접속코드로 로그인한다. 정상이면 me(이름·팀·구분)와 점포 목록이 채워진다.
@@ -190,7 +203,7 @@
   }
   const sigOf = (j) => JSON.stringify([j.me, j.rows || j.stores, j.links, j.status]);
   let lastSig = '';
-  function applyInit(json) { ingest(json); data.status = json.status || {}; lastSig = sigOf(json); }
+  function applyInit(json) { ingest(json); data.status = json.status || {}; lastSig = sigOf(json); tabRaw = ls.get('accessCode'); tabCode = normCode(tabRaw); }
   function saveInit(json) {
     const { status, ...rest } = json;
     ls.set('data-cache', JSON.stringify(rest));
@@ -283,7 +296,10 @@
   function renderGate(err) {
     document.title = '로그인 | 빽다방 홍보물 취합';
     $('.top .who-wrap')?.remove();
-    const note = {
+    dropViews(); // 열려 있던 관리자 화면의 늦은 응답이 로그인 화면을 덮지 않게
+    startGen += 1; // 로그인 화면으로 왔으니 진행 중이던 요청(늦게 성공한 init 등)이 me·캐시를 되살리지 못하게 세대를 넘긴다
+    const once = gateNote; gateNote = ''; // 다른 창에서 로그아웃해 넘어온 경우의 안내(한 번만)
+    const note = once || {
       bad_code: '접속 코드가 맞지 않아요. 다시 확인해 주세요.',
       not_configured: '아직 설정이 끝나지 않았어요. 관리자에게 문의해 주세요.',
       offline: '연결이 되지 않아요. 인터넷을 확인하고 다시 시도해 주세요.',
@@ -301,9 +317,37 @@
 
   function logout() {
     ['accessCode', 'data-cache', 'data-cache-for', 'status-cache'].forEach((k) => ls.set(k, ''));
-    me = null; data.status = {}; photoBook.clear();
+    me = null; data.status = {}; photoBook.clear(); tabRaw = '';
     location.hash = '#/';
     start();
+  }
+
+  // 같은 브라우저의 다른 탭(창)과 접속 코드 저장 칸을 함께 쓴다. 다른 탭에서 로그아웃하거나 다른 코드로 로그인하면 이 탭도 따라간다.
+  // (예전에는 이 탭이 로그인된 화면 그대로 남아 비거나 바뀐 코드로 요청해서, 관리자 화면에 '불러오지 못했어요'만 보였다)
+  let tabCode = '';  // 이 탭이 쓰고 있는 접속 코드(정규화)
+  let tabRaw = '';   // 같은 코드(입력한 그대로): 이 탭의 요청은 이 코드로 보낸다(다른 창에서 바꿔도 이 탭은 따라가기 전까지 자기 계정으로)
+  function reqCode() { return tabRaw || ls.get('accessCode'); } // 로그인 확인 중(아직 tabRaw 없음)에는 저장된 코드
+  function dropViews() { // 열려 있던 관리자 화면의 늦은 응답을 버리고, 열려 있던 사진 확대창을 닫는다
+    logToken += 1; actToken += 1; progToken += 1;
+    const lb = document.getElementById('lightbox'); if (lb && lb.open) lb.close();
+  }
+  let gateNote = ''; // 로그인 화면에 한 번 보여 줄 안내
+  let followLater = false; // 사진을 올리는 중이면 다 올린 뒤에 따라간다
+  function followStoredCode() {
+    const now = normCode(ls.get('accessCode'));
+    if (!me || now === tabCode) return; // 이미 로그인 화면이거나(로그인 중이면 start 가 다시 확인한다) 같은 코드면 그대로 둔다
+    if (uploadQ.running || uploadQ.waiting.length) { followLater = true; return; }
+    me = null; data.status = {}; photoBook.clear(); progCache = null; tabCode = ''; tabRaw = '';
+    if (!now) gateNote = '다른 창에서 로그아웃했어요. 다시 로그인해 주세요.';
+    location.hash = '#/';
+    start(); // 코드가 비었으면 로그인 화면, 다른 코드면 그 코드로 다시 연다(저장 칸은 지우지 않는다)
+  }
+  window.addEventListener('storage', (e) => { if (!DEMO && (e.key === null || e.key === 'accessCode')) followStoredCode(); });
+  // 관리자 화면이 '접속 코드가 맞지 않아요'(bad_code)를 받으면 일반 오류 문구 대신 로그인 화면으로 보낸다.
+  // 저장 칸은 지우지 않는다(다른 탭에서 새로 한 로그인을 지우지 않게). 그사이 코드가 바뀌었으면 바뀐 코드를 따라간다.
+  function codeRejected() {
+    if (normCode(ls.get('accessCode')) !== tabCode) { followStoredCode(); return; }
+    me = null; renderGate(fail('bad_code'));
   }
   // ---------- 공통 조각 ----------
   function row(s, withTeam) {
@@ -671,13 +715,15 @@
   async function upgradeThumb(store, e) {
     if (DEMO || e.upTried || e.repairing || e.local) return;
     e.upTried = true;
+    const gen = startGen; // 기다리는 사이 계정이 바뀌면 이전 계정의 작업은 더 진행하지 않는다
     await new Promise((resolve) => { if (upgradeQ.running < 2) { upgradeQ.running += 1; resolve(); } else upgradeQ.wait.push(() => { upgradeQ.running += 1; resolve(); }); });
     try {
+      if (gen !== startGen) return;
       const url = await fetchImage(e, 'photo', 'full');
-      if (!url) return;
+      if (!url || gen !== startGen) return;
       const better = await fitThumb(url);
       e.full = ''; // 큰 원본은 메모리에서 비운다
-      if (better && better.length > (e.thumb || '').length * 1.25) {
+      if (gen === startGen && better && better.length > (e.thumb || '').length * 1.25) {
         e.thumb = better; thumbDB.put(e.id, better);
         postJson({ action: 'put_thumb', force: true, store: store.code, name: store.name, id: e.id, thumb: better.split(',')[1] }).catch(() => {});
         repaintStore(store.code);
@@ -690,10 +736,13 @@
   async function repairThumb(store, e) {
     if (e.repairing) return;
     e.repairing = true; e.thumbFailed = false;
+    const gen = startGen;
     try {
       const url = await fetchImage(e, 'photo', 'full');
+      if (gen !== startGen) { e.repairing = false; return; } // 계정이 바뀌었으면 이전 계정의 작업은 멈춘다
       if (!url) throw new Error('원본을 받지 못했어요');
       const small = await fitThumb(url);
+      if (gen !== startGen) { e.repairing = false; return; }
       e.thumb = small;
       e.full = ''; // 큰 원본은 메모리에서 비운다(크게 볼 때 다시 받는다)
       thumbDB.put(e.id, small);
@@ -709,14 +758,16 @@
     const need = [...b.before, ...b.after].filter((e) => !e.thumb && !e.local);
     if (!need.length) return;
     need.forEach((e) => { e.thumbFailed = false; });
+    const gen = startGen; // 계정이 바뀌면 이전 계정 화면의 미리보기 채우기는 다음 요청을 시작하지 않는다
     await Promise.all(need.map(async (e) => { const u = await thumbDB.get(e.id); if (u) e.thumb = u; }));
+    if (gen !== startGen) return;
     repaintStore(store.code);
     const rest = need.filter((e) => !e.thumb);
     const groups = [];
     for (let i = 0; i < rest.length; i += 6) groups.push(rest.slice(i, i + 6));
     let next = 0;
     const worker = async () => {
-      while (next < groups.length) {
+      while (next < groups.length && gen === startGen) {
         const g = groups[next]; next += 1;
         try {
           const json = await getJson({ action: 'thumbs', store: store.code, name: store.name, ids: g.map((e) => e.id).join(',') });
@@ -726,9 +777,10 @@
       }
     };
     await Promise.all([worker(), worker(), worker()]);
+    if (gen !== startGen) return;
     const broken = need.filter((e) => !e.thumb);
     let at = 0;
-    const fixer = async () => { while (at < broken.length) { const e = broken[at]; at += 1; await repairThumb(store, e); } };
+    const fixer = async () => { while (at < broken.length && gen === startGen) { const e = broken[at]; at += 1; await repairThumb(store, e); } };
     await Promise.all([fixer(), fixer()]);
   }
 
@@ -754,8 +806,10 @@
     dlg.showModal();
     if (!entry.full) {
       spin.hidden = false; // 큰 사진을 받는 동안 스피너
+      const gen = startGen;
       const url = await fetchImage(entry, 'photo', 'full');
       spin.hidden = true;
+      if (gen !== startGen) return; // 그사이 계정이 바뀌었으면(확대창은 이미 닫힘) 이전 사진을 띄우지 않는다
       if (url && dlg.open) img.src = url;
       else if (!url) cap.textContent = `${text}  (큰 사진을 불러오지 못했어요)`;
     }
@@ -908,6 +962,7 @@
         if (!r || !r.ok) throw fail((r && r.error) || 'confirm_failed');
         snack(title, store.name);
       } catch (err) {
+        if (err && err.code === 'stale') return; // 그사이 계정이 바뀌었다: 새 계정 현황을 되돌리지 않는다
         setLocal(was); revertUi(was); // 저장하지 못했으면 원래대로 돌려 놓는다
         notice = err && err.code === 'bad_code' ? '접속 코드가 맞지 않아 저장하지 못했어요. 로그아웃한 뒤 코드를 다시 입력해 주세요.' : `${what} 표시를 저장하지 못했어요. 잠시 뒤 다시 눌러 주세요.`;
         paintTable();
@@ -940,6 +995,7 @@
         if (!r || !r.ok) throw fail((r && r.error) || 'back_na_failed');
         snack(msg[0], msg[1]);
       } catch (err) {
+        if (err && err.code === 'stale') return; // 그사이 계정이 바뀌었다: 새 계정 현황을 되돌리지 않는다
         setLocal(was);
         notice = err && err.code === 'bad_code' ? '접속 코드가 맞지 않아 저장하지 못했어요. 로그아웃한 뒤 코드를 다시 입력해 주세요.'
           : (err && err.code === 'has_photo' ? '후면 사진이 이미 있어서 \'후면 미해당\'으로 표시할 수 없어요.' : '후면 미해당 표시를 저장하지 못했어요. 잠시 뒤 다시 눌러 주세요.');
@@ -1022,6 +1078,7 @@
         if (!r || !r.ok) throw fail((r && r.error) || 'delete_failed');
         snack(`${label} ${COL[kind]}을 지웠어요`, store.name);
       } catch (err) {
+        if (err && err.code === 'stale') return; // 그사이 계정이 바뀌었다: 새 계정 현황을 되돌리지 않는다
         if (err && err.code === 'no_photo') { snack(`${label} ${COL[kind]}을 지웠어요`, store.name); return; } // 서버에는 이미 없었다
         b[kind] = was; setStat(); // 지우지 못했으면 원래대로
         notice = err && err.code === 'bad_code' ? '접속 코드가 맞지 않아 지우지 못했어요. 로그아웃한 뒤 코드를 다시 입력해 주세요.' : '사진을 지우지 못했어요. 잠시 뒤 다시 눌러 주세요.';
@@ -1084,6 +1141,7 @@
       const prev = working.get(key);
       if (prev && (prev.state === 'up' || prev.state === 'wait')) return;
       if (prev && prev.file !== file) URL.revokeObjectURL(prev.url);
+      const codeAt = reqCode(), whoAt = me ? me.name : '', genAt = startGen; // 사진을 고른 그때의 계정으로 올린다(기다리는 사이 다시 로그인해도 바뀌지 않게)
       const st = { state: uploadQ.running < UPLOAD_PARALLEL ? 'up' : 'wait', file, url: prev && prev.file === file ? prev.url : URL.createObjectURL(file) };
       working.set(key, st); notice = ''; uploadedHere.add(code); paintTable();
       try {
@@ -1092,9 +1150,11 @@
           if (storeView && storeView.code === code) storeView.paintTable();
           const blob = await compress(file);
           const tiny = DEMO ? '' : await fitThumb(blob).catch(() => ''); // 서버가 사진에 붙여 영구 보관하도록 작은 사진을 함께 보낸다(1만 8천 자 이하)
-          const res = await sendPhoto(store, kind, slot, file.name, blob, tiny);
+          const res = await sendPhoto(store, kind, slot, file.name, blob, tiny, codeAt, whoAt);
+          if (genAt !== startGen) { URL.revokeObjectURL(st.url); working.delete(key); return; } // 올리는 사이 계정이 바뀌었다: 서버에는 원래 계정으로 저장됐고, 새 계정 화면·현황에는 넣지 않는다
           const replaced = await remember(store, kind, slot, blob, res || {}, tiny);
           URL.revokeObjectURL(st.url); working.delete(key);
+          if (genAt !== startGen) return; // 미리보기를 만드는 사이 계정이 바뀌었으면 새 계정 현황에 세지 않는다
           const wasComplete = stat(code).complete;
           recount(code, kind, replaced, slot);
           if (!wasComplete && stat(code).complete) justCompleted = store.name;
@@ -1167,7 +1227,10 @@
     return new Promise((resolve, reject) => {
       const run = () => {
         uploadQ.running += 1;
-        task().then(resolve, reject).finally(() => { uploadQ.running -= 1; const next = uploadQ.waiting.shift(); if (next) next(); });
+        task().then(resolve, reject).finally(() => {
+          uploadQ.running -= 1; const next = uploadQ.waiting.shift(); if (next) next();
+          if (followLater && !uploadQ.running && !uploadQ.waiting.length) { followLater = false; setTimeout(followStoredCode, 100); } // 다른 창에서 바뀐 로그인을 이제 따라간다
+        });
       };
       if (uploadQ.running < UPLOAD_PARALLEL) run(); else uploadQ.waiting.push(run);
     });
@@ -1188,10 +1251,10 @@
     snack(n === 1 ? `${last.label} · ${COL[last.kind]}을 저장했어요` : `사진 ${n}장을 저장했어요`, '구글 드라이브에 올라갔어요');
   }
 
-  async function sendPhoto(store, kind, slot, name, blob, tiny) {
+  async function sendPhoto(store, kind, slot, name, blob, tiny, codeAt, whoAt) {
     if (DEMO) { await new Promise((r) => setTimeout(r, 350)); return {}; }
     const payload = {
-      action: 'upload', code: ls.get('accessCode'), uploader: me ? me.name : '',
+      action: 'upload', code: codeAt || reqCode(), uploader: whoAt || (me ? me.name : ''),
       storeCode: store.code, storeName: store.name, kind, slot,
       fileName: name, mime: 'image/jpeg', data: await toBase64(blob), thumb: tiny ? tiny.split(',')[1] || '' : '',
     };
@@ -1231,16 +1294,19 @@
     try { json = await getJson({ action: 'logs' }); }
     catch { shell(h('p', { class: 'empty', text: '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
     if (token !== logToken) return;
-    if (!json.ok) { if (json.error === 'not_allowed') denied(); else shell(h('p', { class: 'empty', text: '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
+    if (!json.ok) { if (json.error === 'not_allowed') denied(); else if (json.error === 'bad_code') codeRejected(); else shell(h('p', { class: 'empty', text: '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
     const info = await lookupIp(); // 지금 접속한 IP (사내망으로 등록할 때 쓴다)
     if (token !== logToken) return;
 
     const internal = json.internal || [];
     const registered = !!info && internal.includes(info.ip);
     async function toggleNet() {
+      const tok = logToken;
       try {
         const r = await getJson({ action: registered ? 'net_remove' : 'net_add', ip: info.ip });
+        if (tok !== logToken) return; // 그사이 다른 화면·계정으로 바뀌었으면 버린다
         if (r.ok) { snack(registered ? '사내망에서 뺐어요' : '사내망으로 등록했어요', info.ip); renderLog(); }
+        else if (r.error === 'bad_code') codeRejected();
       } catch { /* 연결이 안 되면 그대로 둔다 */ }
     }
     const netCard = h('div', { class: 'netcard' },
@@ -1300,7 +1366,7 @@
     try { json = await getJson({ action: 'activity', v: '2' }); }
     catch { shell(h('p', { class: 'empty', text: '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
     if (token !== actToken) return;
-    if (!json.ok) { if (json.error === 'not_allowed') denied(); else shell(h('p', { class: 'empty', text: '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
+    if (!json.ok) { if (json.error === 'not_allowed') denied(); else if (json.error === 'bad_code') codeRejected(); else shell(h('p', { class: 'empty', text: '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
     // 서버가 점포·사람 이름을 한 번만 담은 압축 모양(v2)으로 보내 준다: 예전 한 줄 모양 [시각(ms), 점포 식별값, 점포명, 종류, 항목, 한 사람, 교체]으로 펼친다
     if (json.v === 2) json.rows = json.rows.map((r) => [r[0] * 1000, json.stores[r[1]][0], json.stores[r[1]][1], r[2], r[3], json.users[r[4]], r[5]]);
 
@@ -1453,6 +1519,7 @@
     try { json = await loadProgress(true); }
     catch { shell(h('p', { class: 'empty', text: '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
     if (token !== progToken) return;
+    if (!json.ok && json.error === 'bad_code') { codeRejected(); return; }
     if (!json.ok) { shell(h('p', { class: 'empty', text: json.error === 'not_allowed' ? '팀별 진행율은 관리자 계정에서만 볼 수 있어요.' : '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
 
     const card = progCard;
@@ -1491,6 +1558,7 @@
     try { json = await loadProgress(true); }
     catch { shell(h('p', { class: 'empty', text: '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
     if (token !== progToken) return;
+    if (!json.ok && json.error === 'bad_code') { codeRejected(); return; }
     if (!json.ok) { shell(h('p', { class: 'empty', text: '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
     const o = (json.teams || []).find((t) => t.team === team);
     if (!o) { shell(h('p', { class: 'empty', text: `${team} 점포를 찾지 못했어요.` })); return; }
@@ -1533,6 +1601,7 @@
     try { json = await loadProgress(false); }
     catch { shell(h('p', { class: 'empty', text: '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
     if (token !== progToken) return;
+    if (!json.ok && json.error === 'bad_code') { codeRejected(); return; }
     if (!json.ok || !json.kinds) { shell(h('p', { class: 'empty', text: '불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.' })); return; }
 
     const inTeam = data.stores.filter((s) => teamKey === 'all' || (s.team || '팀 미지정') === teamKey);
@@ -1601,8 +1670,10 @@
 
   // 이미 받아 둔 내용이 있으면 바로 보여주고, 최신 내용은 뒤에서 받아 바뀐 것만 다시 그린다
   async function refreshInBackground() {
+    const gen = startGen, sent = ls.get('accessCode');
     try {
       const json = await fetchInit();
+      if (gen !== startGen || ls.get('accessCode') !== sent) return; // 그사이 다시 로그인했거나 다른 창에서 코드가 바뀌었으면 이 응답은 버린다
       if (!json.ok) {
         if (json.error === 'bad_code') { ['data-cache', 'data-cache-for', 'status-cache'].forEach((k) => ls.set(k, '')); me = null; renderGate(fail('bad_code')); }
         return;
@@ -1621,9 +1692,11 @@
     trackLogin('auto');
   }
 
+  let startGen = 0; // start 가 겹쳐 불리면 마지막 것만 화면에 반영한다
   async function start() {
+    const gen = ++startGen;
     $('#demo-tag').hidden = !DEMO;
-    me = null;
+    me = null; tabRaw = ''; tabCode = ''; dropViews(); progCache = null; photoBook.clear(); // 새로 로그인 확인: 저장된 코드로 묻고, 이전 계정 화면의 늦은 응답·진행율 캐시는 버린다
     if (DEMO) {
       view.replaceChildren(h('div', { class: 'wrap' }, loadingBlock('점포 목록을 불러오는 중이에요')));
       try { await loadData(); } catch (err) { me = null; renderGate(err); return; }
@@ -1638,11 +1711,15 @@
     view.replaceChildren(h('div', { class: 'wrap' }, loadingBlock('점포 목록을 불러오는 중이에요')));
     const direct = loginSubmitted; // 코드를 직접 입력해서 들어온 것인지
     loginSubmitted = false;
+    const sent = ls.get('accessCode');
+    const stale = () => gen !== startGen || ls.get('accessCode') !== sent; // 기다리는 사이 다시 로그인했거나 다른 창에서 코드가 바뀜
     try {
       const json = await fetchInit();
+      if (stale()) { if (gen === startGen) start(); return; } // 바뀐 코드로 다시 연다
       if (!json.ok) throw fail(json.error || 'load');
       saveInit(json); applyInit(json);
     } catch (err) {
+      if (stale()) { if (gen === startGen) start(); return; }
       me = null;
       if (direct && err && err.code === 'bad_code') trackLogin('login'); // 틀린 코드로 로그인하려던 것도 기록된다
       renderGate(err && err.code ? err : fail('offline'));
