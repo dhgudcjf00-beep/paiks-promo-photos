@@ -330,6 +330,7 @@
   function dropViews() { // 열려 있던 관리자 화면의 늦은 응답을 버리고, 열려 있던 사진 확대창을 닫는다
     logToken += 1; actToken += 1; progToken += 1;
     const lb = document.getElementById('lightbox'); if (lb && lb.open) lb.close();
+    if (askClose) askClose(false); // 지우기 확인 창이 떠 있으면 지우지 않고 닫는다
   }
   let gateNote = ''; // 로그인 화면에 한 번 보여 줄 안내
   let followLater = false; // 사진을 올리는 중이면 다 올린 뒤에 따라간다
@@ -385,6 +386,42 @@
     function close() { clearTimeout(snackTimer); el.classList.add('out'); setTimeout(() => el.remove(), 220); }
     document.body.append(el);
     snackTimer = setTimeout(close, 3400);
+  }
+
+  // 지우기 전 확인 창. 휴대폰 앱 안 브라우저(카카오톡 등)는 window.confirm 을 띄우지 않고 바로 '취소'로 넘기는 일이 있어 사이트 안에 직접 그린다.
+  let askClose = null;
+  function askConfirm(title, sub, okText) {
+    if (askClose) askClose(false);
+    return new Promise((resolve) => {
+      const prev = document.activeElement;
+      let done = false;
+      const finish = (v) => {
+        if (done) return; done = true; askClose = null;
+        document.removeEventListener('keydown', onKey, true); window.removeEventListener('hashchange', onNav);
+        wrap.remove(); // 바로 없앤다(닫히는 동안 화면 누름을 가로채지 않게)
+        try { if (prev && prev.isConnected && prev.focus) prev.focus({ preventScroll: true }); } catch { /* 포커스를 못 돌려도 괜찮다 */ }
+        resolve(v);
+      };
+      const onKey = (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); return; }
+        if (e.key === 'Tab') { // 창 안의 두 버튼 사이에서만 움직인다
+          e.preventDefault(); e.stopPropagation();
+          (document.activeElement === noBtn ? okBtn : noBtn).focus();
+        }
+      };
+      const onNav = () => finish(false); // 다른 화면으로 가면 지우지 않고 닫는다
+      const noBtn = h('button', { type: 'button', class: 'btn ghost', onclick: () => finish(false) }, '취소');
+      const okBtn = h('button', { type: 'button', class: 'btn primary', onclick: () => finish(true) }, okText || '지우기');
+      const wrap = h('div', { class: 'ask', onclick: (e) => { if (e.target === wrap) finish(false); } },
+        h('div', { class: 'ask-box', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'ask-title', 'aria-describedby': sub ? 'ask-sub' : null },
+          h('b', { id: 'ask-title', text: title }), sub ? h('p', { id: 'ask-sub', text: sub }) : null,
+          h('div', { class: 'ask-btns' }, noBtn, okBtn)));
+      askClose = finish;
+      document.addEventListener('keydown', onKey, true); window.addEventListener('hashchange', onNav);
+      const lb = document.getElementById('lightbox'); if (lb && lb.open) lb.close(); // 사진 확대창과 겹치지 않게
+      document.body.append(wrap);
+      try { noBtn.focus({ preventScroll: true }); } catch { try { noBtn.focus(); } catch { /* 포커스를 못 줘도 창은 쓸 수 있다 */ } }
+    });
   }
 
   // ---------- 사용 방법: 말풍선(툴팁) 안내 ----------
@@ -930,7 +967,9 @@
       cmBtn.disabled = false;
     }
     async function delComment(c) {
-      if (!window.confirm('이 코멘트를 삭제할까요?')) return;
+      const gen0 = startGen, code0 = reqCode(), hash0 = location.hash;
+      if (!(await askConfirm('이 코멘트를 삭제할까요?', '', '삭제'))) return;
+      if (startGen !== gen0 || reqCode() !== code0 || location.hash !== hash0 || !me) return; // 그사이 계정·화면이 바뀌었으면 지우지 않는다
       try {
         const r = await postJson({ action: 'comment_del', store: code, id: c.id });
         if (!r || !r.ok) throw fail((r && r.error) || 'comment_failed');
@@ -1055,7 +1094,12 @@
 
     // 사진 지우기: 담당자·관리자가 할 수 있고, 지운 사진은 드라이브 휴지통으로 간다. 업로드 완료·진행율도 바로 바뀐다.
     async function deletePhoto(kind, slot, label, entry) {
-      if (!window.confirm(`${label} ${COL[kind]}을 지울까요?\n지운 사진은 드라이브 휴지통으로 가요.`)) return;
+      const gen0 = startGen, code0 = reqCode(), hash0 = location.hash;
+      if (!(await askConfirm(`${label} ${COL[kind]}을 지울까요?`, '지운 사진은 드라이브 휴지통으로 가요.', '지우기'))) return;
+      // 확인 창이 떠 있는 사이 계정·화면이 바뀌었거나, 그 칸 사진이 바뀌었거나 올리는 중이면 지우지 않는다
+      if (startGen !== gen0 || reqCode() !== code0 || location.hash !== hash0 || !me) return;
+      const now = book(code)[kind].find((e) => e.slot === slot);
+      if (working.has(`${kind}:${slot}`) || !now || (entry && now.id !== entry.id)) { notice = '그사이 사진이 바뀌어서 지우지 않았어요. 다시 확인해 주세요.'; paintTable(); return; }
       const b = book(code), was = b[kind];
       b[kind] = was.filter((e) => e.slot !== slot); notice = '';
       if (entry && entry.id) thumbDB.del(entry.id);
